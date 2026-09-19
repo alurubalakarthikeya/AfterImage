@@ -1,0 +1,56 @@
+[package]
+name = "afterimage"
+version = "0.1.0"
+description = "AfterImage — a local-first desktop application for your personal digital archive"
+authors = ["AfterImage"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "afterimage_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Timestamps in the machine's own zone, stored as RFC 3339 strings.
+chrono = { version = "0.4", features = ["serde"] }
+
+# SQLite with FTS5 compiled in (the `bundled` feature enables it).
+rusqlite = { version = "0.32", features = ["bundled", "chrono", "serde_json"] }
+
+# File watching, directory walking and thumbnailing
+notify = "6"
+notify-debouncer-mini = "0.4"
+walkdir = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff"] }
+
+# Talking to the local Python indexer
+ureq = { version = "2", features = ["json"] }
+
+# Move deleted files to the OS trash so delete is always reversible
+trash = "5"
+
+thiserror = "1"
+log = "0.4"
+env_logger = "0.11"
+
+[features]
+# Enabled by `tauri build --features custom-protocol` in production.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

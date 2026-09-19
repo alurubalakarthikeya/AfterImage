@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AfterImage · desktop frame</title>
+    <!--
+      A 1440×900 window rendered inside a narrow preview pane.
+
+      AfterImage is a desktop application: its breakpoints assume at least
+      1200px of content width, so a phone-sized preview shows the compact shell
+      rather than the real thing. This harness hosts the actual app in an
+      iframe the size of the target window and moves the visible region with
+      URL parameters — every review is a plain navigation, which also means the
+      webview is guaranteed to repaint.
+
+        ?x=430&y=330            pan to a point, 1:1
+        ?scale=0.33&h=1800      fit the whole window in the pane
+        ?w=1280&h=800           review the smallest supported window
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #f4f7f6;
+      }
+      #stage {
+        position: relative;
+        overflow: hidden;
+        width: 100vw;
+        height: 100vh;
+      }
+      #app {
+        position: absolute;
+        left: 0;
+        top: 0;
+        border: 0;
+        box-shadow: 0 0 0 1px rgba(20, 33, 36, 0.08);
+        transform-origin: top left;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><iframe id="app" src="/"></iframe></div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const num = (name, fallback) => {
+        const value = Number.parseFloat(params.get(name));
+        return Number.isFinite(value) ? value : fallback;
+      };
+
+      const app = document.getElementById('app');
+      const scale = num('scale', 1);
+      const width = num('w', 1440);
+      const height = num('h', 900);
+
+      app.style.width = `${width}px`;
+      app.style.height = `${height}px`;
+      if (scale !== 1) app.style.transform = `scale(${scale})`;
+      app.style.left = `${-num('x', 0) * scale}px`;
+      app.style.top = `${-num('y', 0) * scale}px`;
+
+      window.__frame = app;
+      window.__frameInfo = { width, height, scale };
+    </script>
+  </body>
+</html>

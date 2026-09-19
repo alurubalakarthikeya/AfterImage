@@ -1,0 +1,49 @@
+# AfterImage local indexer
+#
+# The core service runs with just these four packages. Everything else is
+# optional: capabilities are detected at import time and reported by /health,
+# so a half-installed environment degrades instead of crashing.
+
+# --- core (required) --------------------------------------------------------
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+numpy>=1.26
+
+# --- OCR --------------------------------------------------------------------
+# PaddleOCR is the primary engine. On machines where it will not build, the
+# service falls back to RapidOCR, then to reporting OCR as unavailable.
+paddleocr>=2.8 ; python_version < "3.13"
+paddlepaddle>=2.6 ; python_version < "3.13"
+opencv-python-headless>=4.10
+pillow>=10.4
+rapidocr-onnxruntime>=1.3 ; python_version < "3.13"
+
+# --- document text ----------------------------------------------------------
+# PyMuPDF reads a PDF's own text layer, which is both faster and more accurate
+# than OCR when it exists.
+pymupdf>=1.24
+
+# --- embeddings -------------------------------------------------------------
+# sentence-transformers covers both text embeddings and CLIP/SigLIP image
+# embedding. Install only if semantic search is wanted.
+sentence-transformers>=3.2
+torch>=2.4
+open-clip-torch>=2.26
+
+# --- image understanding -----------------------------------------------------
+# Labels come from CLIP zero-shot classification; titles come from a small
+# captioning model. With neither installed, files are described by filename,
+# extracted text and metadata. Nothing is ever invented.
+transformers>=4.44
+
+# --- vector index -----------------------------------------------------------
+# sqlite-vec keeps everything in the archive's own SQLite file; FAISS is the
+# faster option for very large archives. Numpy is always available as a floor.
+sqlite-vec>=0.1.6
+faiss-cpu>=1.8
+
+# --- optional local LLM -----------------------------------------------------
+# The model is served by Ollama, not by this process. Install Ollama separately
+# and point AFTERIMAGE_OLLAMA_URL at it. Nothing here requires it.
+ollama>=0.4

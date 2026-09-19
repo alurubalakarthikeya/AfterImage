@@ -1,0 +1,447 @@
+@import 'tailwindcss';
+
+/* Bundled locally (no CDN) so AfterImage renders identically offline. */
+@import '@fontsource-variable/inter/index.css';
+@import '@fontsource-variable/jetbrains-mono/index.css';
+
+/* ==========================================================================
+   Design tokens
+   Every colour is a plain CSS variable so the whole surface can be re-themed
+   by swapping one attribute on <html>. Tailwind reads them through
+   `@theme inline` below, which keeps the values live instead of frozen.
+   ========================================================================== */
+
+:root {
+  /* Surfaces */
+  --af-canvas: #f4f7f6;
+  --af-surface: #ffffff;
+  --af-surface-2: #f8faf9;
+  --af-surface-3: #eef3f2;
+  --af-surface-sunken: #ebefee;
+
+  /* Text */
+  --af-ink: #142124;
+  --af-ink-2: #697879;
+  --af-ink-3: #93a1a0;
+
+  /* Accent */
+  --af-accent: #2f7773;
+  --af-accent-strong: #286d69;
+  --af-accent-ink: #225e5b;
+  --af-accent-soft: #dcefed;
+  --af-accent-softer: #eaf5f3;
+
+  /* Hairlines */
+  --af-line: rgba(20, 33, 36, 0.08);
+  --af-line-strong: rgba(20, 33, 36, 0.14);
+
+  /* Status (muted on purpose — this is not a monitoring dashboard) */
+  --af-positive: #3f7d57;
+  --af-caution: #9a6b2e;
+  --af-critical: #a8442e;
+
+  /* Low-saturation collection surfaces */
+  --af-mint: #e2efeb;
+  --af-lavender: #e8e7f2;
+  --af-peach: #f5e9e0;
+  --af-blue: #e3eaf3;
+  --af-mint-ink: #2c5f57;
+  --af-lavender-ink: #4c4a70;
+  --af-peach-ink: #7a4f37;
+  --af-blue-ink: #37536f;
+
+  /* Code / extracted-text panel */
+  --af-code-bg: #131b1a;
+  --af-code-ink: #d7e3e1;
+  --af-code-dim: #7d908d;
+  --af-code-line: rgba(215, 227, 225, 0.1);
+  --af-code-accent: #79c4bb;
+  --af-code-critical: #e08a72;
+
+  /* Elevation — deliberately faint */
+  --af-shadow-soft: 0 4px 20px rgba(20, 33, 36, 0.04);
+  --af-shadow-raised: 0 1px 2px rgba(20, 33, 36, 0.04), 0 10px 28px rgba(20, 33, 36, 0.07);
+  --af-shadow-float: 0 12px 40px rgba(20, 33, 36, 0.12), 0 2px 8px rgba(20, 33, 36, 0.06);
+  --af-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --af-canvas: #0f1514;
+  --af-surface: #161f1e;
+  --af-surface-2: #1a2423;
+  --af-surface-3: #212c2b;
+  --af-surface-sunken: #121a19;
+
+  --af-ink: #e9f0ef;
+  --af-ink-2: #98a6a4;
+  --af-ink-3: #6c7a78;
+
+  --af-accent: #4fa39b;
+  --af-accent-strong: #448f88;
+  --af-accent-ink: #a5dbd6;
+  --af-accent-soft: #1c3331;
+  --af-accent-softer: #172726;
+
+  --af-line: rgba(233, 240, 239, 0.09);
+  --af-line-strong: rgba(233, 240, 239, 0.16);
+
+  --af-positive: #6fb98c;
+  --af-caution: #c99b58;
+  --af-critical: #d98066;
+
+  --af-mint: #1b2a27;
+  --af-lavender: #232234;
+  --af-peach: #2c2321;
+  --af-blue: #1e2733;
+  --af-mint-ink: #9ed4c9;
+  --af-lavender-ink: #bdb9e2;
+  --af-peach-ink: #e0b598;
+  --af-blue-ink: #a6c3e0;
+
+  --af-code-bg: #0d1413;
+  --af-code-ink: #d2dedc;
+  --af-code-dim: #6f817e;
+
+  --af-shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.24);
+  --af-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(0, 0, 0, 0.28);
+  --af-shadow-float: 0 16px 44px rgba(0, 0, 0, 0.46), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --af-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--af-canvas);
+  --color-surface: var(--af-surface);
+  --color-surface-2: var(--af-surface-2);
+  --color-surface-3: var(--af-surface-3);
+  --color-sunken: var(--af-surface-sunken);
+
+  --color-ink: var(--af-ink);
+  --color-ink-2: var(--af-ink-2);
+  --color-ink-3: var(--af-ink-3);
+
+  --color-accent: var(--af-accent);
+  --color-accent-strong: var(--af-accent-strong);
+  --color-accent-ink: var(--af-accent-ink);
+  --color-accent-soft: var(--af-accent-soft);
+  --color-accent-softer: var(--af-accent-softer);
+
+  --color-line: var(--af-line);
+  --color-line-strong: var(--af-line-strong);
+
+  --color-positive: var(--af-positive);
+  --color-caution: var(--af-caution);
+  --color-critical: var(--af-critical);
+
+  --color-mint: var(--af-mint);
+  --color-lavender: var(--af-lavender);
+  --color-peach: var(--af-peach);
+  --color-blue: var(--af-blue);
+  --color-mint-ink: var(--af-mint-ink);
+  --color-lavender-ink: var(--af-lavender-ink);
+  --color-peach-ink: var(--af-peach-ink);
+  --color-blue-ink: var(--af-blue-ink);
+
+  --color-code: var(--af-code-bg);
+  --color-code-ink: var(--af-code-ink);
+  --color-code-dim: var(--af-code-dim);
+  --color-code-line: var(--af-code-line);
+  --color-code-accent: var(--af-code-accent);
+  --color-code-critical: var(--af-code-critical);
+
+  --font-sans:
+    'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+
+  --radius-btn: 12px;
+  --radius-input: 12px;
+  --radius-thumb: 14px;
+  --radius-card: 18px;
+  --radius-card-lg: 22px;
+  --radius-panel: 16px;
+  --radius-pill: 999px;
+
+  --shadow-soft: var(--af-shadow-soft);
+  --shadow-raised: var(--af-shadow-raised);
+  --shadow-float: var(--af-shadow-float);
+  --shadow-inset: var(--af-shadow-inset);
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1.05rem;
+  --text-body: 0.8438rem;
+  --text-body--line-height: 1.3rem;
+  --text-card: 0.875rem;
+  --text-hero: 3rem;
+  --text-hero--line-height: 1;
+  --text-display: 2.125rem;
+  --text-display--line-height: 1;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  * {
+    border-color: var(--af-line);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--af-canvas);
+    color: var(--af-ink);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.45;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 0;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--af-ink-3);
+  }
+
+  /* Desktop software does not text-select unless you mean it. */
+  :where(body) {
+    user-select: none;
+  }
+
+  :where(input, textarea, [data-selectable]) {
+    user-select: text;
+  }
+
+  img {
+    -webkit-user-drag: none;
+    user-drag: none;
+  }
+
+  ::selection {
+    background: var(--af-accent-soft);
+    color: var(--af-accent-ink);
+  }
+
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--af-accent);
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+}
+
+/* ==========================================================================
+   Scrollbars — thin, unobtrusive, present only when needed
+   ========================================================================== */
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--af-line-strong) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--af-line-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--af-ink-3);
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+/* ==========================================================================
+   Utilities
+   ========================================================================== */
+
+@utility surface-card {
+  background-color: var(--af-surface);
+  border: 1px solid var(--af-line);
+  box-shadow: var(--af-shadow-soft);
+}
+
+/* The only "glass" in the app: floating chrome over imagery. */
+@utility glass-chrome {
+  background-color: color-mix(in srgb, var(--af-surface) 72%, transparent);
+  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+}
+
+@utility drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+@utility no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+@utility line-clamp-filename {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@utility grid-masonry {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--masonry-col, 220px), 1fr));
+  grid-auto-rows: 8px;
+  grid-auto-flow: dense;
+  gap: 0 16px;
+}
+
+@utility scroll-fade-y {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+}
+
+@utility tap-highlight-none {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ==========================================================================
+   Motion
+   Three keyframes, used sparingly: an indeterminate slide, a card entrance,
+   and a slow pulse for the boot mark.
+   ========================================================================== */
+
+@keyframes af-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes af-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes af-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/*
+ * Tooltips appear after a beat, which is the whole point of the delay: sweeping
+ * the pointer across the toolbar should not flash eight labels.
+ *
+ * They are `display: none` while closed, so an anchored label near the window
+ * edge cannot widen the layout or get clipped by the shell — which is why the
+ * delay lives in an animation rather than a transition: transitions do not run
+ * on an element that has just been displayed, animations do.
+ */
+@keyframes af-tooltip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.af-tooltip {
+  animation: af-tooltip-in 120ms ease-out 420ms both;
+}
+
+.af-fade-in,
+.af-route-enter {
+  animation: af-rise 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.af-pulse-slow {
+  animation: af-pulse 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .af-fade-in,
+  .af-route-enter,
+  .af-pulse-slow {
+    animation: none !important;
+  }
+
+  /* The delay is motion of a sort: keep the label instantaneous instead. */
+  .af-tooltip {
+    animation: af-tooltip-in 1ms both;
+  }
+}

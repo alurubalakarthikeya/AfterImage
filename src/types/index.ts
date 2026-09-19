@@ -1,0 +1,278 @@
+/**
+ * Domain model for AfterImage.
+ *
+ * These shapes are the contract between the React renderer, the Tauri/Rust
+ * layer and the local Python indexing service. Every field is serialisable, so
+ * the same vocabulary travels across the IPC boundary unchanged — and every
+ * one of them is derived from a real file on disk. Nothing here is sample data.
+ */
+
+/** Broad bucket a file falls into. Drives navigation, stats and thumbnailing. */
+export type FileKind =
+  | 'photo'
+  | 'screenshot'
+  | 'document'
+  | 'video'
+  | 'audio'
+  | 'design'
+  | 'archive'
+  | 'other';
+
+/** Where a file sits in the local processing pipeline. */
+export type IndexState =
+  | 'pending'
+  | 'processing'
+  | 'indexed'
+  | 'failed'
+  /** Format the archive index deliberately does not process. */
+  | 'unsupported'
+  /** The file was in the index but is no longer on disk. */
+  | 'missing';
+
+/** Outcome of the text-extraction step, tracked separately from indexing. */
+export type TextState = 'none' | 'pending' | 'extracted' | 'unavailable' | 'failed';
+
+/** A folder the user has granted AfterImage access to. */
+export interface ArchiveFolder {
+  id: string;
+  path: string;
+  name: string;
+  /** Watched folders are rescanned continuously by the Rust watcher. */
+  watched: boolean;
+  fileCount: number;
+  sizeBytes: number;
+  lastScanAt: string | null;
+  status: 'ok' | 'missing' | 'denied' | 'scanning';
+  /** Why the folder is not usable, when it is not. */
+  problem?: string;
+}
+
+export interface ArchiveFile {
+  id: string;
+  name: string;
+  /** Absolute path on this machine. Never rewritten by AfterImage. */
+  path: string;
+  kind: FileKind;
+  ext: string;
+  mime: string;
+  bytes: number;
+  /** Pixels, for images and video. */
+  width?: number;
+  height?: number;
+  /** Seconds, for video and audio. */
+  durationSec?: number;
+  /** Page count, for documents. */
+  pages?: number;
+  folderId: string;
+  folderPath: string;
+  createdAt: string;
+  modifiedAt: string;
+  indexedAt: string;
+  favorite: boolean;
+  tagIds: string[];
+  collectionIds: string[];
+  projectId: string | null;
+  /** Absolute path to the generated thumbnail, when one exists. */
+  thumbPath: string | null;
+  /**
+   * Title derived from the file's own content by the local vision model —
+   * searchable metadata only. The file on disk keeps its original name.
+   */
+  generatedTitle: string | null;
+  description: string | null;
+  /** Visual labels with confidence above the configured floor. */
+  labels: string[];
+  /** Text recovered by OCR or a document text layer. */
+  ocrText?: string;
+  ocrConfidence?: number;
+  ocrState: TextState;
+  /** Which engine produced the text: "paddleocr", "pdf-text", … */
+  ocrEngine?: string;
+  indexState: IndexState;
+  /** Content hash, used to skip reprocessing unchanged files. */
+  hash: string | null;
+  /** Set when the local models could not produce an embedding. */
+  embeddingState?: 'none' | 'indexed' | 'unavailable' | 'failed';
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  /** How many files carry the tag; kept on the tag for cheap rendering. */
+  count: number;
+  pinned?: boolean;
+}
+
+export interface ArchiveCollection {
+  id: string;
+  name: string;
+  /** Smart collections resolve their contents from a rule instead of a list. */
+  kind: 'manual' | 'smart';
+  fileCount: number;
+  sizeBytes: number;
+  surface: SurfaceTone;
+  icon: string;
+  rule?: CollectionRule;
+  /** Real thumbnail paths for the collage, taken from the collection's files. */
+  preview: string[];
+}
+
+export type SurfaceTone = 'mint' | 'lavender' | 'peach' | 'blue' | 'neutral';
+
+export interface CollectionRule {
+  query?: string;
+  kinds?: FileKind[];
+  tags?: string[];
+  /** Rolling window in days. */
+  days?: number;
+  favoritesOnly?: boolean;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  fileCount: number;
+  color: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ActivityKind =
+  | 'folder-added'
+  | 'folder-removed'
+  | 'folder-missing'
+  | 'indexed'
+  | 'tagged'
+  | 'project'
+  | 'collection'
+  | 'favorite'
+  | 'deleted'
+  | 'failed'
+  | 'text-extracted';
+
+export interface ActivityEntry {
+  id: string;
+  kind: ActivityKind;
+  label: string;
+  detail?: string;
+  at: string;
+  fileId?: string;
+}
+
+export interface StorageStats {
+  /** Bytes actually indexed, summed from the database. */
+  usedBytes: number;
+  /** Capacity of the volume holding the archive, from the OS. */
+  totalBytes: number;
+  indexedFiles: number;
+  pendingFiles: number;
+  failedFiles: number;
+  /** Bytes per kind, used by the settings breakdown. */
+  byKind: Record<string, number>;
+}
+
+export interface ArchiveTotals {
+  files: number;
+  newToday: number;
+  byKind: Record<FileKind, number>;
+}
+
+/** Live state of the indexing queue, reported by the Rust pipeline. */
+export interface IndexStatus {
+  state: 'idle' | 'scanning' | 'indexing' | 'paused' | 'error';
+  /** Files waiting to be processed. */
+  pending: number;
+  processing: number;
+  done: number;
+  failed: number;
+  total: number;
+  /** Files per minute, measured over the last window. */
+  perMinute: number;
+  currentFile: string | null;
+  currentFolder: string | null;
+  lastScanAt: string | null;
+  /** Set when the pipeline stopped for a reason worth telling the user about. */
+  problem: string | null;
+}
+
+/**
+ * A parsed, structured search intent.
+ *
+ * Parsing happens in Rust so the retrieval path has one definition of what a
+ * query means; the renderer sends the raw string plus any filters the user set
+ * in the UI.
+ */
+export interface SearchQuery {
+  raw: string;
+  kind?: FileKind;
+  tagIds?: string[];
+  collectionId?: string;
+  projectId?: string;
+  favoritesOnly?: boolean;
+  sinceDays?: number;
+  folderId?: string;
+}
+
+/** What the retrieval layer understood, echoed back for the results header. */
+export interface QueryInterpretation {
+  terms: string[];
+  kinds: FileKind[];
+  tags: string[];
+  sinceDays?: number;
+  favoritesOnly?: boolean;
+  /** Human-readable summary of the parsed intent. */
+  summary: string;
+  /** True when a local model rewrote the query rather than the rules parser. */
+  refinedByModel: boolean;
+}
+
+export interface SearchHit {
+  file: ArchiveFile;
+  score: number;
+  /** Which index produced the hit — surfaced subtly in the results list. */
+  match: 'filename' | 'text' | 'tag' | 'folder' | 'project' | 'collection' | 'semantic';
+  snippet?: string;
+  /** True when only the vector index found it. */
+  semantic: boolean;
+}
+
+export interface SearchResponse {
+  hits: SearchHit[];
+  /** Total rows the query matched, which may exceed the returned page. */
+  total: number;
+  interpretation: QueryInterpretation;
+  /** False when no embedding model is installed. */
+  semanticAvailable: boolean;
+  /** Set when retrieval failed; the UI shows the reason instead of empty results. */
+  error: string | null;
+}
+
+export type ViewMode = 'grid' | 'list' | 'timeline';
+
+export type Appearance = 'light' | 'dark' | 'system';
+
+export type Density = 'comfortable' | 'compact';
+
+/** Every navigable destination in the shell. */
+export type RouteId =
+  | 'home'
+  | 'all'
+  | 'photos'
+  | 'screenshots'
+  | 'documents'
+  | 'videos'
+  | 'projects'
+  | 'collections'
+  | 'search'
+  | 'settings';
+
+export interface ContextMenuItem {
+  id: string;
+  label: string;
+  icon?: string;
+  shortcut?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  separatorBefore?: boolean;
+  submenu?: ContextMenuItem[];
+}

@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build output
+dist/
+dist-ssr/
+*.local
+
+# tauri
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.cargo/
+
+# python service
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+services/indexer/models/
+services/indexer/.cache/
+
+# local data / user state
+.afterimage/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# editors / os
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+.freebuff
+*.freebuff
