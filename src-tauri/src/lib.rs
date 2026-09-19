@@ -21,6 +21,7 @@ mod scan;
 mod search;
 mod service;
 mod state;
+mod supervisor;
 mod thumbs;
 mod watcher;
 
@@ -30,6 +31,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use crate::state::AppState;
+use crate::supervisor::Supervisor;
 
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -61,6 +63,33 @@ pub fn run() {
             // Persisted preferences decide how this session behaves.
             commands::apply_settings(&state);
             commands::restore_watchers(app.handle(), &state)?;
+
+            // The indexing service is started for the user, in the background so
+            // a cold start never delays the window. A machine with no indexer
+            // installed gets a sentence explaining what is off, not a failure.
+            let supervisor = Arc::new(Supervisor::new());
+            app.manage(Arc::clone(&supervisor));
+            {
+                let app_handle = app.handle().clone();
+                let state_handle = Arc::clone(&state);
+                let supervisor_handle = Arc::clone(&supervisor);
+                std::thread::spawn(move || {
+                    let outcome = supervisor::ensure(&app_handle, &state_handle, &supervisor_handle);
+                    log::info!("indexer: {}", outcome.detail);
+                    // Only report a missing indexer as a problem when the user
+                    // has asked for what needs it. An archive without models is
+                    // a supported way to run AfterImage, not a fault.
+                    let wants_models = state_handle
+                        .semantic_enabled
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if !outcome.started && wants_models {
+                        state_handle.set_issue(Some(outcome.detail));
+                    } else {
+                        state_handle.set_issue(None);
+                    }
+                    pipeline::emit_status(&app_handle, &state_handle, "idle");
+                });
+            }
 
             // A first run has nothing to watch: the interface asks for a folder.
             let folders = {
@@ -94,6 +123,8 @@ pub fn run() {
             commands::list_files,
             commands::files_by_ids,
             commands::file_detail,
+            commands::hero_image,
+            commands::os_identity,
             commands::storage_stats,
             commands::index_status,
             commands::list_tags,
@@ -122,6 +153,7 @@ pub fn run() {
             commands::delete_project,
             commands::set_file_project,
             commands::open_path,
+            commands::open_with,
             commands::reveal_path,
             commands::trash_files,
             commands::rename_file,
@@ -133,6 +165,11 @@ pub fn run() {
                 if let Some(state) = window.app_handle().try_state::<Arc<AppState>>() {
                     state.stopping.store(true, Ordering::SeqCst);
                     watcher::stop(&state);
+                }
+                // The service is this process's child: stopping it here is what
+                // keeps a Python process from outliving the window.
+                if let Some(supervisor) = window.app_handle().try_state::<Arc<Supervisor>>() {
+                    supervisor.stop();
                 }
             }
         })

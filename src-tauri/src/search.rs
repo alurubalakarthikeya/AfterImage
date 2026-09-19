@@ -272,6 +272,59 @@ pub struct Retrieval<'a> {
 }
 
 impl<'a> Retrieval<'a> {
+    /// Ask the local model to interpret the query, when one is enabled.
+    ///
+    /// Every merge below is guarded: terms are added rather than replaced, a
+    /// kind or a date range only fills a gap the rules left, and a model that is
+    /// not installed (or not answering) leaves the rules-only result untouched.
+    fn refine_with_model(&self, query: &SearchQuery, parsed: &mut Parsed) {
+        use std::sync::atomic::Ordering;
+
+        if !self.state.llm_enabled.load(Ordering::Relaxed) || query.raw.trim().is_empty() {
+            return;
+        }
+        let port = self.state.service_port.load(Ordering::Relaxed);
+        let Some(service::ModelQuery {
+            terms,
+            kind,
+            since_days,
+            favorites_only,
+            interpreted,
+        }) = service::parse_query(port, &query.raw)
+        else {
+            return;
+        };
+
+        for term in terms {
+            let term = term.trim().to_lowercase();
+            if !term.is_empty() && !parsed.terms.contains(&term) {
+                parsed.terms.push(term);
+            }
+        }
+        if parsed.kinds.is_empty() {
+            if let Some(kind) = kind {
+                let kind = kind.to_lowercase();
+                if KNOWN_KINDS.contains(&kind.as_str()) {
+                    parsed.kinds = vec![kind];
+                }
+            }
+        }
+        if parsed.since_days.is_none() {
+            parsed.since_days = since_days;
+        }
+        if !parsed.favorites_only {
+            parsed.favorites_only = favorites_only.unwrap_or(false);
+        }
+
+        parsed.refined_by_model = true;
+        // The model's own phrasing is what the results header shows when it has
+        // one: it is a restatement of the question, never a claim about results.
+        parsed.summary = interpreted
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| summarise(parsed, &query.raw));
+    }
+
     pub fn search(&self, query: &SearchQuery) -> AppResult<SearchResponse> {
         let mut parsed = parse_rules(&query.raw);
 
@@ -289,6 +342,13 @@ impl<'a> Retrieval<'a> {
             parsed.favorites_only = true;
             parsed.summary = summarise(&parsed, &query.raw);
         }
+
+        // The optional local model rewrites the sentence into criteria. It is
+        // only asked when the user has turned it on, and it only *adds* to what
+        // the rules already found — a filter the user clicked is never
+        // overridden by a guess, and a query the model cannot improve is left
+        // exactly as it was. Nothing here searches the archive.
+        self.refine_with_model(query, &mut parsed);
 
         let tags = db::list_tags(self.conn)?;
         let tag_ids: Vec<String> = query

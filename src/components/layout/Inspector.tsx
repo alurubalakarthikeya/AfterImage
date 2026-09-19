@@ -230,9 +230,13 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
   const projects = useArchiveStore((state) => state.projects);
   const setProject = useArchiveStore((state) => state.setProject);
   const setQuickLookOpen = useUIStore((state) => state.setQuickLookOpen);
+  const setSimilarFor = useUIStore((state) => state.setSimilarFor);
   const clearSelection = useUIStore((state) => state.clearSelection);
 
   const project = projects.find((item) => item.id === file.projectId) ?? null;
+  const canFindSimilar =
+    (file.kind === 'photo' || file.kind === 'screenshot' || file.kind === 'design') &&
+    file.embeddingState === 'indexed';
 
   return (
     <>
@@ -303,22 +307,36 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
               <Icon name="Eye" size={16} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
+          {/* Visual search only means something for a picture, and only once the
+              local embedder has seen it. Otherwise the button stays out of the
+              way rather than opening an empty panel. */}
+          {canFindSimilar && (
+            <Tooltip label="Find visually similar" side="top">
+              <IconButton
+                size="md"
+                variant="soft"
+                label="Find visually similar"
+                onClick={() => setSimilarFor(file.id)}
+              >
+                <Icon name="Layers" size={16} strokeWidth={1.9} />
+              </IconButton>
+            </Tooltip>
+          )}
         </div>
       </div>
 
-      <Card className="p-4">
-        <Section title="Details">
+      {/* Flat sections with hairline separators, the way an inspector panel in a
+          professional tool is built: labels in a fixed column, values in the
+          rest, no rounded box around each group of four rows. */}
+      <div className="flex flex-col gap-4 border-t border-line pt-3.5">
+        <Section title="Information">
           <FileMetadata file={file} />
         </Section>
-      </Card>
 
-      <Card className="p-4">
         <Section title="Tags">
           <TagEditor file={file} />
         </Section>
-      </Card>
 
-      <Card className="p-4">
         <Section
           title="Project"
           action={
@@ -356,29 +374,21 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
             ))}
           </div>
         </Section>
-      </Card>
 
-      <Card className="p-4">
         <Section
-          title="Extracted Text"
-          action={
-            file.ocrText ? (
-              <span className="text-2xs text-ink-3">OCR · on device</span>
-            ) : undefined
-          }
+          title="Extracted text"
+          action={file.ocrText ? <span className="text-2xs text-ink-3">On device</span> : undefined}
         >
           <ExtractedText file={file} />
         </Section>
-      </Card>
 
-      <Card className="p-4">
         <Section
-          title="Related Files"
-          action={<span className="text-2xs text-ink-3">by tags &amp; project</span>}
+          title="Related files"
+          action={<span className="text-2xs text-ink-3">Tags · project · text</span>}
         >
           <RelatedFiles file={file} />
         </Section>
-      </Card>
+      </div>
     </>
   );
 }

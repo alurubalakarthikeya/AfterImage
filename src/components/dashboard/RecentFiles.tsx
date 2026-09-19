@@ -5,8 +5,8 @@ import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
 import { formatCount } from '@/utils/format';
 import { useFileQuery } from '@/hooks/useFileQuery';
-import { Card, SectionHeader } from '@/components/common/Card';
 import { PillTabs } from '@/components/common/Button';
+import { Icon } from '@/components/common/Icon';
 import { FileGrid } from '@/components/files/FileGrid';
 
 const TABS: Array<{ id: string; label: string; kind?: FileKind }> = [
@@ -17,16 +17,16 @@ const TABS: Array<{ id: string; label: string; kind?: FileKind }> = [
   { id: 'video', label: 'Videos', kind: 'video' },
 ];
 
-/** Tiles the dashboard shows before "View all" takes over. */
+/** Tiles the dashboard shows before the file browser takes over. */
 const HOME_TILES = 8;
 
 /**
- * Recent files.
+ * Recently added.
  *
- * The masonry grid is the point: a screenshot next to a portrait next to a
- * document, sized by what they actually are. The rows come from the index,
- * ordered by creation date, filtered by the tab — nothing here is a local slice
- * of a cached list, so a file indexed a second ago can appear in it.
+ * Deliberately not a card. The gallery is the content of the page, so it sits on
+ * the page: one heading row with the filter and a route into the full browser,
+ * then the tiles. Wrapping a gallery in a bordered panel added a frame around
+ * the only thing the user came here to look at.
  */
 export function RecentFiles({ className }: { className?: string }) {
   const [tab, setTab] = useState('all');
@@ -43,48 +43,45 @@ export function RecentFiles({ className }: { className?: string }) {
   );
   const { files, total, loading } = useFileQuery(query);
 
-  const countFor = (kind?: FileKind) => {
-    if (!kind) return totals.files;
-    return totals.byKind[kind] ?? 0;
-  };
+  const countFor = (kind?: FileKind) => (kind ? (totals.byKind[kind] ?? 0) : totals.files);
 
   if (folders.length === 0) return null;
 
-  return (
-    <Card className={className ? `p-4 ${className}` : 'p-4'}>
-      <SectionHeader
-        title="Recent Files"
-        subtitle={`${formatCount(query.kinds ? countFor(active.kind) : total)} ${
-          query.kinds ? `${active.label.toLowerCase()} ` : ''
-        }indexed`}
-        actionLabel="View all"
-        onAction={() => navigate('all')}
-      >
-        <PillTabs
-          tabs={TABS.map((item) => ({
-            id: item.id,
-            label: item.label,
-            count: item.kind ? countFor(item.kind) : undefined,
-          }))}
-          value={tab}
-          onChange={setTab}
-          className="mr-2 hidden xl:flex"
-        />
-      </SectionHeader>
+  const shown = query.kinds ? countFor(active.kind) : total;
 
-      <PillTabs
-        tabs={TABS.map((item) => ({ id: item.id, label: item.label }))}
-        value={tab}
-        onChange={setTab}
-        size="sm"
-        className="mt-3 xl:hidden"
-      />
+  return (
+    <section className={className} aria-label="Recently added files">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-section font-semibold tracking-[-0.01em] text-ink">Recently added</h2>
+          <span className="text-2xs tabular-nums text-ink-3">
+            {formatCount(shown)} {active.kind ? active.label.toLowerCase() : 'files'}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <PillTabs
+            tabs={TABS.map((item) => ({ id: item.id, label: item.label }))}
+            value={tab}
+            onChange={setTab}
+            size="sm"
+          />
+          <button
+            type="button"
+            onClick={() => navigate('all')}
+            className="inline-flex items-center gap-1 text-2xs font-medium text-accent-ink underline-offset-4 hover:underline"
+          >
+            Browse all
+            <Icon name="ArrowRight" size={11} strokeWidth={2.2} />
+          </button>
+        </div>
+      </div>
 
       <FileGrid
         files={files}
         loading={loading}
         minColumn={Math.max(150, thumbnailSize - 10)}
-        className="mt-4"
+        className="mt-3"
         emptyTitle={active.kind ? `No ${active.label.toLowerCase()} indexed yet` : 'Nothing indexed yet'}
         emptyDescription={
           active.kind
@@ -93,6 +90,6 @@ export function RecentFiles({ className }: { className?: string }) {
         }
         onOpen={(file: ArchiveFile) => void openFile(file.id)}
       />
-    </Card>
+    </section>
   );
 }

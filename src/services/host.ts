@@ -104,12 +104,28 @@ export type HostEvent =
 
 export type HostListener = (event: HostEvent) => void;
 
+/** Who is using this machine, as the operating system reports it. */
+export interface LocalIdentity {
+  userName: string | null;
+  homeDir: string | null;
+}
+
 export interface ArchiveHost {
   readonly name: HostName;
   readonly capabilities: HostCapabilities;
 
   /** One read that covers the whole shell: folders, counts, recent files. */
   snapshot(): Promise<ArchiveSnapshot>;
+  /**
+   * A photograph from the user's own library, for the Home hero. `null` when the
+   * archive holds nothing suitable — which is a valid answer, not an error.
+   */
+  heroImage(): Promise<ArchiveFile | null>;
+  /**
+   * The local account this app is running as. Used to greet the person actually
+   * at the machine; `null` where the platform will not say.
+   */
+  identity(): Promise<LocalIdentity | null>;
   files(query: FileQuery): Promise<FilePage>;
   filesByIds(ids: string[]): Promise<ArchiveFile[]>;
   storageStats(): Promise<StorageStats>;
@@ -158,6 +174,8 @@ export interface ArchiveHost {
 
   // ---- file actions ----------------------------------------------------- //
   openFile(path: string): Promise<void>;
+  /** Hands the file to the OS "open with" chooser. */
+  openWith(path: string): Promise<void>;
   revealFile(path: string): Promise<void>;
   /** Moves files to the OS trash; the originals are never deleted outright. */
   moveToTrash(fileIds: string[]): Promise<void>;

@@ -18,7 +18,8 @@ const MATCH_COPY: Record<SearchHit['match'], { label: string; icon: string }> = 
   folder: { label: 'Folder', icon: 'Folder' },
   project: { label: 'Project', icon: 'FolderKanban' },
   collection: { label: 'Collection', icon: 'Layers' },
-  semantic: { label: 'Similar meaning', icon: 'Sparkle' },
+  // "Similar meaning" is described, not branded: no sparkle, no "AI match".
+  semantic: { label: 'Similar meaning', icon: 'Search' },
 };
 
 function HighlightedText({ text, terms }: { text: string; terms: string[] }) {

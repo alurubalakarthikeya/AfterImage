@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import type { ArchiveFile } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { KIND_LABEL } from '@/stores/selectors';
@@ -14,10 +14,12 @@ const GRID_COLUMNS = 'minmax(0, 1fr) 118px 168px 96px 132px';
 const FileRow = memo(function FileRow({
   file,
   selected,
+  order,
   onOpen,
 }: {
   file: ArchiveFile;
   selected: boolean;
+  order: string[];
   onOpen: (file: ArchiveFile) => void;
 }) {
   return (
@@ -26,11 +28,14 @@ const FileRow = memo(function FileRow({
       role="option"
       aria-selected={selected}
       tabIndex={-1}
-      onClick={(event) =>
-        useUIStore.getState().selectFile(file.id, {
-          additive: event.metaKey || event.ctrlKey || event.shiftKey,
-        })
-      }
+      onClick={(event) => {
+        const ui = useUIStore.getState();
+        if (event.shiftKey && order.length > 0) {
+          ui.selectFile(file.id, { range: true, rangeOrder: order });
+          return;
+        }
+        ui.selectFile(file.id, { additive: event.metaKey || event.ctrlKey });
+      }}
       onDoubleClick={() => onOpen(file)}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -48,10 +53,15 @@ const FileRow = memo(function FileRow({
           <span className="line-clamp-filename text-body text-ink" title={file.name}>
             {file.name}
           </span>
-          <span className="line-clamp-filename text-2xs text-ink-3">
-            {file.favorite ? '★ ' : ''}
-            {file.indexState !== 'indexed' ? `${file.indexState} · ` : ''}
-            {file.folderPath}
+          <span className="flex min-w-0 items-center gap-1 text-2xs text-ink-3">
+            {file.favorite && (
+              <Icon name="Star" size={10} strokeWidth={2} fill="currentColor" className="shrink-0" />
+            )}
+            {file.indexState !== 'indexed' && (
+              <span className="shrink-0">{file.indexState}</span>
+            )}
+            {file.indexState !== 'indexed' && <span aria-hidden="true">·</span>}
+            <span className="line-clamp-filename">{file.folderPath}</span>
           </span>
         </span>
       </div>
@@ -80,6 +90,7 @@ export function FileList({
 }) {
   const selectedIds = useUIStore((state) => state.selectedFileIds);
   const openFile = useArchiveStore((state) => state.openFile);
+  const order = useMemo(() => files.map((file) => file.id), [files]);
   const handleOpen = onOpen ?? ((file: ArchiveFile) => void openFile(file.id));
 
   if (files.length === 0) {
@@ -124,6 +135,7 @@ export function FileList({
         <FileRow
           key={file.id}
           file={file}
+          order={order}
           selected={selectedIds.includes(file.id)}
           onOpen={handleOpen}
         />

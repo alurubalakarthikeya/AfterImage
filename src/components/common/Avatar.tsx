@@ -1,6 +1,13 @@
 import { cn } from '@/utils/format';
+import { Icon } from './Icon';
 
-/** Initials avatar. The archive is local, so there is no remote image to load. */
+/**
+ * Initials avatar. The archive is local, so there is no remote image to load.
+ *
+ * With no name yet — which is the state on first launch, before the local
+ * account has been read — this draws a neutral glyph rather than a question
+ * mark, which would read as a loading failure instead of "not set".
+ */
 export function Avatar({
   name,
   size = 32,
@@ -29,7 +36,7 @@ export function Avatar({
       style={{ width: size, height: size, fontSize: Math.round(size * 0.4) }}
       aria-hidden="true"
     >
-      {initials || '?'}
+      {initials || <Icon name="User" size={Math.round(size * 0.5)} strokeWidth={1.9} />}
     </span>
   );
 }

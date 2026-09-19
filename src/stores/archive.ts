@@ -111,6 +111,7 @@ export interface ArchiveStoreState {
 
   // file actions
   openFile: (fileId: string) => Promise<void>;
+  openWith: (fileId: string) => Promise<void>;
   revealFile: (fileId: string) => Promise<void>;
   copyPath: (fileId: string) => Promise<void>;
 }
@@ -521,6 +522,16 @@ export const useArchiveStore = create<ArchiveStoreState>()((set, get) => {
         await getHost().openFile(file.path);
       } catch (error) {
         notice('error', `Could not open the file: ${errorMessage(error)}`);
+      }
+    },
+
+    async openWith(fileId) {
+      const file = get().fileById(fileId);
+      if (!file) return;
+      try {
+        await getHost().openWith(file.path);
+      } catch (error) {
+        notice('error', `Could not open the file with another app: ${errorMessage(error)}`);
       }
     },
 

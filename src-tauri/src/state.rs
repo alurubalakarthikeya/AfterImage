@@ -21,7 +21,6 @@ use crate::pipeline::Job;
 
 pub struct AppState {
     pub db: Mutex<Connection>,
-    pub app_data: PathBuf,
     pub thumbnail_dir: PathBuf,
 
     /// Local Python indexer port (FastAPI on loopback only).
@@ -30,6 +29,10 @@ pub struct AppState {
     pub service_enabled: AtomicBool,
     /// Whether embeddings should be produced and searched.
     pub semantic_enabled: AtomicBool,
+    /// Whether the optional local model may interpret search queries. Off until
+    /// the user asks for it, which is why it is a separate switch from the two
+    /// above: it costs a round trip per search, not per file.
+    pub llm_enabled: AtomicBool,
 
     // Queue counters, mirrored into `IndexStatus` on every change.
     pub queue_total: AtomicI64,
@@ -59,11 +62,11 @@ impl AppState {
         let thumbnail_dir = app_data.join("thumbnails");
         Self {
             db: Mutex::new(db),
-            app_data,
             thumbnail_dir,
             service_port: AtomicU16::new(8765),
             service_enabled: AtomicBool::new(true),
             semantic_enabled: AtomicBool::new(false),
+            llm_enabled: AtomicBool::new(false),
             queue_total: AtomicI64::new(0),
             pending: AtomicI64::new(0),
             processing: AtomicI64::new(0),

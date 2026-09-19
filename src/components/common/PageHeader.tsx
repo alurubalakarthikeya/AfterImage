@@ -27,7 +27,7 @@ export function PageHeader({
               <Icon name={icon} size={14} strokeWidth={1.9} />
             </span>
           )}
-          <h1 className="truncate text-[20px] font-semibold tracking-[-0.02em] text-ink">{title}</h1>
+          <h1 className="truncate text-title font-semibold tracking-[-0.02em] text-ink">{title}</h1>
           {count !== undefined && (
             <span className="text-meta tabular-nums text-ink-3">{formatCount(count)} files</span>
           )}

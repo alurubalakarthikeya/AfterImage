@@ -36,7 +36,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "category": "Productivity",
     "shortDescription": "Local-first archive for your files",
     "longDescription": "AfterImage watches the folders you choose, indexes what it finds on your machine, and makes the whole archive searchable — offline, with no account and nothing uploaded.",
@@ -48,7 +48,9 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "resources": [],
+    "resources": {
+      "resources/indexer": "indexer"
+    },
     "macOS": {
       "minimumSystemVersion": "10.15"
     },

@@ -46,7 +46,10 @@ export interface UIState {
   similarFor: string | null;
 
   navigate: (route: RouteId) => void;
-  selectFile: (fileId: string, options?: { additive?: boolean; open?: boolean }) => void;
+  selectFile: (
+    fileId: string,
+    options?: { additive?: boolean; open?: boolean; range?: boolean; rangeOrder?: string[] },
+  ) => void;
   selectMany: (fileIds: string[]) => void;
   clearSelection: () => void;
   setViewMode: (mode: ViewMode) => void;
@@ -100,6 +103,25 @@ export const useUIStore = create<UIState>()((set, get) => ({
 
   selectFile: (fileId, options) =>
     set((state) => {
+      // Shift extends from the last selection, like every file manager there is.
+      // The ordered ids come from the view doing the asking, because only it
+      // knows what the user is actually looking at.
+      const order = options?.rangeOrder;
+      if (options?.range && order && state.selectedFileId) {
+        const from = order.indexOf(state.selectedFileId);
+        const to = order.indexOf(fileId);
+        if (from !== -1 && to !== -1) {
+          const [start, end] = from <= to ? [from, to] : [to, from];
+          return {
+            selectedFileIds: order.slice(start, end + 1),
+            selectedFileId: fileId,
+            inspectorOpen: true,
+            contextMenu: null,
+            similarFor: null,
+          };
+        }
+      }
+
       const additive = options?.additive ?? false;
       const alreadySelected = state.selectedFileIds.includes(fileId);
       const selectedFileIds = additive
@@ -149,6 +171,8 @@ export const useUIStore = create<UIState>()((set, get) => ({
   closeContextMenu: () => set({ contextMenu: null }),
   setActiveCollection: (activeCollectionId) => set({ activeCollectionId }),
   setActiveProject: (activeProjectId) => set({ activeProjectId }),
+  // Visual similarity is a panel over the current page rather than a nav item:
+  // the question it answers is always "like this one", which needs a subject.
   setSimilarFor: (similarFor) => set({ similarFor }),
 
   dismissTop: () => {
@@ -163,6 +187,10 @@ export const useUIStore = create<UIState>()((set, get) => ({
     }
     if (state.quickLookOpen) {
       set({ quickLookOpen: false });
+      return true;
+    }
+    if (state.similarFor) {
+      set({ similarFor: null });
       return true;
     }
     if (state.appearanceOpen) {

@@ -2,19 +2,23 @@ import { useMemo } from 'react';
 import { useArchiveStore } from '@/stores/archive';
 import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
+import { getHost } from '@/services/host';
+import { useHeroImage } from '@/hooks/useHeroImage';
 import { cn, dateParts, formatBytes, formatCount, greeting } from '@/utils/format';
 import { Icon } from '@/components/common/Icon';
 
 /**
- * The hero.
+ * The header of the dashboard.
  *
- * This was a photograph placeholder; now it is the archive itself — how much is
- * indexed, when it was last read, and what is still in the queue. The date
- * lockup stays: a local archive is about when things happened to you.
- *
- * The wash behind it is a flat tint, not an image, because inventing a scenic
- * photograph for a screen about the user's actual files would be a lie told in
+ * The photograph is one of the user's own — the best landscape the index could
+ * find, shown from the preview Rust wrote for it. When there is no suitable
+ * photograph the card is a flat brand tint, because decorating a screen about
+ * someone's own files with an image they do not own is a lie told in
  * decoration.
+ *
+ * The type is deliberately modest: this is a dashboard header, not a hero
+ * banner. It greets, it states the size of the archive, and it gets out of the
+ * way of the files below it.
  */
 export function HeroCard({ className }: { className?: string }) {
   const totals = useArchiveStore((state) => state.totals);
@@ -23,91 +27,118 @@ export function HeroCard({ className }: { className?: string }) {
   const folders = useArchiveStore((state) => state.folders);
   const userName = useSettingsStore((state) => state.userName);
   const navigate = useUIStore((state) => state.navigate);
+  const select = useUIStore((state) => state.selectFile);
+
+  const hero = useHeroImage();
+  const heroSrc = hero?.previewPath ? getHost().assetUrl(hero.previewPath) : null;
 
   const now = useMemo(() => new Date(), []);
   const date = useMemo(() => dateParts(now), [now]);
   const watched = folders.filter((folder) => folder.watched).length;
+  const name = userName.trim();
+  const queued = index.pending + index.processing;
 
   return (
     <section
       className={cn(
-        'relative h-[250px] overflow-hidden rounded-card-lg border border-line',
+        'relative h-[188px] overflow-hidden rounded-card-lg border border-line',
         className,
       )}
-      aria-label="Archive summary"
-      style={{
-        background:
-          'linear-gradient(140deg, #12302e 0%, #1b4542 42%, #2f7773 100%)',
-      }}
+      aria-label="Library summary"
+      style={
+        heroSrc
+          ? undefined
+          : { background: 'linear-gradient(150deg, #16332f 0%, #20504b 60%, #2f7773 100%)' }
+      }
     >
-      {/* Date lockup */}
-      <div className="absolute right-6 top-5 text-right text-white">
-        <div className="flex items-start justify-end gap-1.5">
-          <span className="mt-1 text-[11px] font-semibold tracking-[0.16em] text-white/60">
-            {date.month}
-          </span>
+      {heroSrc && (
+        <>
+          <img
+            src={heroSrc}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+          {/* One scrim, shaped so the type keeps its contrast whatever the
+              photograph happens to be doing behind it. */}
           <span
-            className="text-[34px] font-semibold leading-none tracking-[-0.04em]"
-            style={{ fontStretch: 'condensed' }}
-          >
-            {date.day}
-          </span>
+            aria-hidden="true"
+            className="absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(96deg, rgba(8,20,19,0.9) 0%, rgba(8,20,19,0.7) 46%, rgba(8,20,19,0.34) 76%, rgba(8,20,19,0.52) 100%)',
+            }}
+          />
+        </>
+      )}
+
+      {/* Date lockup, small enough to read as a calendar, not a poster. */}
+      <div className="absolute right-5 top-4 text-right text-white/85">
+        <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-white/50">
+          {date.month}
         </div>
-        <div className="mt-1 text-meta text-white/55">
+        <div className="text-[19px] font-semibold leading-tight tabular-nums">{date.day}</div>
+        <div className="text-[11px] text-white/45">
           {date.weekday}, {date.year}
         </div>
       </div>
 
-      <div className="relative flex h-full flex-col justify-end p-6">
-        <p className="text-meta text-white/60">{greeting(now)},</p>
-        <h1
-          className="mt-0.5 text-hero font-[650] tracking-[-0.02em] text-white"
-          style={{ fontVariationSettings: '"wght" 650' }}
-        >
-          {userName}
+      <div className="relative flex h-full flex-col justify-end p-5">
+        <h1 className="text-hero font-semibold tracking-[-0.02em] text-white">
+          {greeting(now)}
+          {name ? `, ${name}` : ''}
         </h1>
 
         {totals.files === 0 ? (
-          <div className="mt-3">
-            <p className="max-w-[420px] text-meta leading-relaxed text-white/70">
-              Nothing indexed yet. Choose the folders that hold your screenshots, photos and
-              documents — AfterImage reads them where they are and never moves a file.
-            </p>
-            <button
-              type="button"
-              onClick={() => navigate('settings')}
-              className="mt-3 inline-flex h-9 items-center gap-2 rounded-btn border border-white/25 bg-white/12 px-3 text-meta font-medium text-white transition-colors duration-150 hover:bg-white/20"
-            >
-              <Icon name="FolderPlus" size={14} strokeWidth={2} />
-              Add a folder
-            </button>
-          </div>
+          <p className="mt-1.5 max-w-[440px] text-meta leading-relaxed text-white/65">
+            Nothing indexed yet. Choose the folders that hold your screenshots, photos and
+            documents — AfterImage reads them where they are and never moves a file.
+          </p>
         ) : (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-meta text-white/80">
-            <span className="tabular-nums">{formatCount(totals.files)} files</span>
-            <span className="h-1 w-1 rounded-full bg-white/40" aria-hidden="true" />
-            <span className="tabular-nums text-white">
-              {formatCount(totals.newToday)} added today
+          <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-meta text-white/70">
+            <span className="tabular-nums">{formatCount(totals.files)} files indexed</span>
+            <span className="h-3 w-px bg-white/20" aria-hidden="true" />
+            <span className="tabular-nums">{formatCount(totals.newToday)} added today</span>
+            <span className="h-3 w-px bg-white/20" aria-hidden="true" />
+            <span className="tabular-nums">
+              {formatBytes(storage.usedBytes)} across {watched} watched{' '}
+              {watched === 1 ? 'folder' : 'folders'}
             </span>
-            <span className="h-1 w-1 rounded-full bg-white/40" aria-hidden="true" />
-            <button
-              type="button"
-              onClick={() => navigate('all')}
-              className="inline-flex items-center gap-1 text-white/85 underline-offset-4 transition-colors duration-150 hover:text-white hover:underline"
-            >
-              Open the archive
-              <Icon name="ArrowRight" size={12} strokeWidth={2.2} />
-            </button>
           </div>
         )}
 
-        <p className="mt-4 text-meta leading-relaxed text-white/45">
-          {storage.indexedFiles > 0
-            ? `${formatBytes(storage.usedBytes)} across ${watched} watched ${watched === 1 ? 'folder' : 'folders'} · ${
-                index.state === 'indexing' ? `indexing ${formatCount(index.pending + index.processing)} now` : 'up to date'
-              }`
-            : 'Everything is processed on this machine. Nothing is uploaded, ever.'}
-        </p>
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-white/45">
+          <span>
+            {queued > 0
+              ? `Indexing ${formatCount(queued)} file${queued === 1 ? '' : 's'} in the background`
+              : index.failed > 0
+                ? `${formatCount(index.failed)} file${index.failed === 1 ? '' : 's'} could not be processed`
+                : totals.files === 0
+                  ? 'Everything is processed on this machine. Nothing is uploaded.'
+                  : 'Index up to date'}
+          </span>
+          <button
+            type="button"
+            onClick={() => navigate('settings')}
+            className="inline-flex items-center gap-1 underline-offset-4 transition-colors duration-150 hover:text-white/80 hover:underline"
+          >
+            Manage watch folders
+            <Icon name="ArrowRight" size={10} strokeWidth={2.2} />
+          </button>
+          {/* Which of their own photographs is on screen, and a way into it. */}
+          {hero && (
+            <button
+              type="button"
+              onClick={() => select(hero.id)}
+              title={hero.path}
+              className="max-w-[260px] truncate underline-offset-4 transition-colors duration-150 hover:text-white/80 hover:underline"
+            >
+              Cover: {hero.generatedTitle ?? hero.name}
+            </button>
+          )}
+        </div>
       </div>
     </section>
   );

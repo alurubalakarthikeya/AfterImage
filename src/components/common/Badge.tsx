@@ -2,17 +2,22 @@ import type { ReactNode } from 'react';
 import { cn } from '@/utils/format';
 import { Icon } from './Icon';
 
-type Tone = 'neutral' | 'mint' | 'lavender' | 'peach' | 'blue' | 'accent' | 'critical' | 'caution';
+/**
+ * A label, in one of five meanings: nothing in particular, the brand accent, or
+ * one of the three states software actually has (ok, watch out, broken).
+ *
+ * There are deliberately no pastel tones. Colouring a badge by file type taught
+ * the eye that colour means category, which is the opposite of what colour is
+ * for here — a red row must mean something is wrong, not that the file is a PDF.
+ */
+type Tone = 'neutral' | 'accent' | 'positive' | 'caution' | 'critical';
 
 const TONES: Record<Tone, string> = {
   neutral: 'bg-surface-3 text-ink-2',
-  mint: 'bg-mint text-mint-ink',
-  lavender: 'bg-lavender text-lavender-ink',
-  peach: 'bg-peach text-peach-ink',
-  blue: 'bg-blue text-blue-ink',
   accent: 'bg-accent-soft text-accent-ink',
-  critical: 'bg-critical/12 text-critical',
+  positive: 'bg-positive/12 text-positive',
   caution: 'bg-caution/12 text-caution',
+  critical: 'bg-critical/12 text-critical',
 };
 
 export function Badge({
@@ -40,7 +45,7 @@ export function Badge({
   );
 }
 
-/** Tags: 12px text, 5px/9px padding, fully rounded — per the spec. */
+/** Tags: 12px text, 5px/9px padding, fully rounded. */
 export function TagPill({
   label,
   onRemove,
@@ -97,14 +102,22 @@ export function TagPill({
   );
 }
 
+/**
+ * The dot in front of a log entry.
+ *
+ * Only three of these carry colour: something arrived, something failed, or
+ * something was removed. Everything else is a neutral tick, because a feed in
+ * which every row has its own colour communicates nothing at all.
+ */
 const DOT_TONES: Record<string, string> = {
   added: 'bg-accent',
-  tagged: 'bg-lavender-ink',
-  project: 'bg-blue-ink',
-  imported: 'bg-positive',
+  imported: 'bg-accent',
   indexed: 'bg-ink-3',
-  collection: 'bg-peach-ink',
   deleted: 'bg-critical',
+  failed: 'bg-critical',
+  tagged: 'bg-ink-3',
+  project: 'bg-ink-3',
+  collection: 'bg-ink-3',
 };
 
 export function StatusDot({

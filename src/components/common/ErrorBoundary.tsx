@@ -11,6 +11,8 @@ interface Props {
 
 interface State {
   error: Error | null;
+  /** The message a person needs, not the stack trace they do not. */
+  showDetails: boolean;
 }
 
 /**
@@ -25,9 +27,9 @@ interface State {
  * function component like every other one in the tree.
  */
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null };
+  state: State = { error: null, showDetails: false };
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
   }
 
@@ -37,10 +39,10 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error(`AfterImage: the ${this.props.region ?? 'panel'} failed to render`, error, info);
   }
 
-  private reset = (): void => this.setState({ error: null });
+  private reset = (): void => this.setState({ error: null, showDetails: false });
 
   render(): ReactNode {
-    const { error } = this.state;
+    const { error, showDetails } = this.state;
     if (!error) return this.props.children;
 
     return (
@@ -58,21 +60,33 @@ export class ErrorBoundary extends Component<Props, State> {
             still usable.
           </p>
 
-          <pre
-            data-selectable
-            className="mt-3 max-h-[120px] overflow-auto rounded-panel bg-sunken px-3 py-2 font-mono text-[11px] leading-[1.5] text-ink-2"
-          >
-            {error.message}
-          </pre>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={this.reset}
+              className="inline-flex h-8 items-center gap-2 rounded-btn bg-accent-strong px-3 text-meta font-medium text-white transition-colors duration-150 hover:bg-accent"
+            >
+              <Icon name="RefreshCw" size={13} strokeWidth={2.2} />
+              Reload this panel
+            </button>
+            <button
+              type="button"
+              onClick={() => this.setState({ showDetails: !showDetails })}
+              aria-expanded={showDetails}
+              className="rounded-btn px-2 py-1 text-meta text-ink-2 transition-colors duration-150 hover:bg-surface-3 hover:text-ink"
+            >
+              {showDetails ? 'Hide details' : 'View details'}
+            </button>
+          </div>
 
-          <button
-            type="button"
-            onClick={this.reset}
-            className="mt-3 inline-flex h-9 items-center gap-2 rounded-btn bg-accent-strong px-3 text-meta font-medium text-white transition-colors duration-150 hover:bg-accent"
-          >
-            <Icon name="RefreshCw" size={13} strokeWidth={2.2} />
-            Reload this panel
-          </button>
+          {showDetails && (
+            <pre
+              data-selectable
+              className="mt-3 max-h-[160px] overflow-auto rounded-panel bg-sunken px-3 py-2 font-mono text-[11px] leading-[1.5] text-ink-2"
+            >
+              {error.message}
+            </pre>
+          )}
         </div>
       </div>
     );

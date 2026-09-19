@@ -64,6 +64,11 @@ export const DESKTOP_REQUIRED =
   'This is the browser preview of the interface. Indexing watches, OCR and search ' +
   'need the desktop build, where Rust reads your folders and SQLite stores the index.';
 
+/**
+ * The browser has no filesystem, so there is no photograph to show and no
+ * account to greet. `null` is the truthful answer to both, and the interface
+ * renders its neutral variants rather than a stand-in picture or a made-up name.
+ */
 const EMPTY_TOTALS: ArchiveTotals = { files: 0, newToday: 0, byKind: EMPTY_BY_KIND };
 
 const EMPTY_STORAGE: StorageStats = {
@@ -120,6 +125,10 @@ export function createDevelopmentHost(): ArchiveHost {
       recent: [],
       index: EMPTY_INDEX,
     }),
+
+    heroImage: async (): Promise<ArchiveFile | null> => null,
+
+    identity: async () => null,
 
     files: async (_query: FileQuery): Promise<FilePage> => ({
       files: [],
@@ -187,6 +196,7 @@ export function createDevelopmentHost(): ArchiveHost {
     activity: async (_limit?: number): Promise<ActivityEntry[]> => [],
 
     openFile: () => refuse('Opening files'),
+    openWith: () => refuse('Opening files with another app'),
     revealFile: () => refuse('Revealing files'),
     moveToTrash: () => refuse('Deleting files'),
     renameFile: () => refuse('Renaming files'),

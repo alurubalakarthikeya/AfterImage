@@ -18,6 +18,7 @@ import type {
   HostCapabilities,
   HostEvent,
   HostListener,
+  LocalIdentity,
 } from './host';
 
 /**
@@ -122,6 +123,8 @@ export function createNativeHost(): ArchiveHost {
     capabilities: CAPABILITIES,
 
     snapshot: () => invoke<ArchiveSnapshot>('archive_snapshot'),
+    heroImage: () => invoke<ArchiveFile | null>('hero_image'),
+    identity: () => invoke<LocalIdentity>('os_identity'),
     files: (query) => invoke<FilePage>('list_files', { query }),
     filesByIds: (ids) => invoke<ArchiveFile[]>('files_by_ids', { ids }),
     storageStats: () => invoke<StorageStats>('storage_stats'),
@@ -168,6 +171,7 @@ export function createNativeHost(): ArchiveHost {
     activity: (limit) => invoke<ActivityEntry[]>('list_activity', { limit }),
 
     openFile: (path) => invoke<void>('open_path', { path }),
+    openWith: (path) => invoke<void>('open_with', { path }),
     revealFile: (path) => invoke<void>('reveal_path', { path }),
     moveToTrash: (fileIds) => invoke<void>('trash_files', { fileIds }),
     renameFile: (fileId, name) => invoke<void>('rename_file', { fileId, name }),

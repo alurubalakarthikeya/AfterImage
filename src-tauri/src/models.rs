@@ -41,6 +41,10 @@ pub struct FileRecord {
     pub project_id: Option<String>,
     /// Absolute path to the generated thumbnail, when one exists.
     pub thumb_path: Option<String>,
+    /// Absolute path to the larger derivative written for the hero panel.
+    /// Only image-like files have one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_path: Option<String>,
     /// Title derived from the file's own content by a local model. Metadata
     /// only: the file on disk keeps its original name.
     pub generated_title: Option<String>,

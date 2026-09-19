@@ -135,13 +135,17 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
 
     {
         let conn = state.db()?;
-        db::set_index_state(&conn, &job.file_id, "processing")?;
+        db::set_index_state(&conn, &job.file_id, db::STATE_PROCESSING)?;
     }
 
     // ---- 1. Dimensions and thumbnails -------------------------------------
     let source = std::path::Path::new(&job.path);
     let dimensions = thumbs::dimensions(source);
     let thumbnail = thumbs::generate(&state.thumbnail_dir, &job.file_id, &job.path, &job.kind);
+    // The bigger derivative is what the Home hero shows. It is generated here,
+    // once, from the user's own file, so the hero is always a real photograph
+    // from this library — never a bundled or borrowed image.
+    let preview = thumbs::generate_preview(&state.thumbnail_dir, &job.file_id, &job.path, &job.kind);
 
     {
         let conn = state.db()?;
@@ -150,6 +154,9 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
         }
         if let Some(path) = thumbnail.as_deref() {
             db::set_thumbnail(&conn, &job.file_id, path)?;
+        }
+        if let Some(path) = preview.as_deref() {
+            db::set_preview(&conn, &job.file_id, path)?;
         }
     }
 

@@ -196,7 +196,7 @@ export function Sidebar() {
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-2">
         {orderedCollections.length === 0 && !collapsed && !draftOpen && (
           <p className="px-3 py-2 text-2xs leading-relaxed text-ink-3">
-            No collections yet. Group files by hand, or let a smart rule do it.
+            No collections yet. Group files by hand, or save a rule that keeps itself up to date.
           </p>
         )}
         {orderedCollections.map((collection) => (
@@ -214,7 +214,7 @@ export function Sidebar() {
                 level: 'info',
                 message:
                   collection.kind === 'smart'
-                    ? `“${collection.name}” — smart collection, resolves automatically`
+                    ? `“${collection.name}” — saved rule, resolves automatically`
                     : `“${collection.name}” — ${collection.fileCount} files`,
               });
             }}

@@ -5,90 +5,115 @@ import { cn, formatAbsolute, formatBytes, formatCount, formatResolution } from '
 import { Icon } from '@/components/common/Icon';
 
 interface Row {
-  icon: string;
   label: string;
   value: string;
   title?: string;
-  copy?: boolean;
+  copy?: string;
   mono?: boolean;
+  problem?: boolean;
 }
 
-/** Dense, scannable metadata. No giant cards, no wasted vertical space. */
+/**
+ * File information.
+ *
+ * An inspector table: uppercase label column, value column, hairlines between
+ * rows. Icons are gone from it — a calendar glyph in front of every date, a
+ * folder glyph in front of every path, was decoration repeated eight times in a
+ * 320px column, and it cost 60px of a panel that needs the width for paths.
+ */
 export function FileMetadata({ file, className }: { file: ArchiveFile; className?: string }) {
   const copyPath = useArchiveStore((state) => state.copyPath);
 
   const rows: Row[] = [
-    { icon: 'Calendar', label: 'Date', value: formatAbsolute(file.createdAt) },
-    {
-      icon: 'Maximize2',
-      label: 'Size',
-      value: formatResolution(file.width, file.height) ?? '—',
-    },
-    { icon: 'HardDrive', label: 'Bytes', value: formatBytes(file.bytes) },
-    { icon: file.kind === 'video' ? 'Film' : 'File', label: 'Type', value: `${KIND_SINGULAR[file.kind]} · .${file.ext}` },
+    { label: 'Type', value: `${KIND_SINGULAR[file.kind]} · ${file.ext.replace(/^\./, '').toUpperCase() || 'FILE'}` },
+    { label: 'Size', value: formatBytes(file.bytes) },
   ];
 
-  if (file.pages) {
-    rows.push({ icon: 'FileText', label: 'Pages', value: formatCount(file.pages) });
+  const resolution = formatResolution(file.width, file.height);
+  if (resolution) rows.push({ label: 'Dimensions', value: resolution });
+  if (file.durationSec !== undefined) {
+    rows.push({ label: 'Duration', value: `${Math.round(file.durationSec)}s` });
   }
-  if (file.ocrConfidence) {
+  if (file.pages !== undefined && file.pages > 0) {
+    rows.push({ label: 'Pages', value: formatCount(file.pages) });
+  }
+
+  rows.push({ label: 'Added', value: formatAbsolute(file.createdAt) });
+  rows.push({ label: 'Modified', value: formatAbsolute(file.modifiedAt) });
+
+  if (file.ocrText) {
     rows.push({
-      icon: 'ScanText',
-      label: 'OCR',
-      value: `${Math.round(file.ocrConfidence * 100)}% confidence`,
+      label: 'Text',
+      value: file.ocrConfidence
+        ? `Extracted · ${Math.round(file.ocrConfidence * 100)}% confidence`
+        : 'Extracted',
+    });
+  } else if (file.ocrState === 'unavailable') {
+    rows.push({ label: 'Text', value: 'Extraction unavailable', problem: true });
+  } else if (file.ocrState === 'none') {
+    rows.push({ label: 'Text', value: 'Not a text format' });
+  }
+
+  if (file.indexState !== 'indexed') {
+    rows.push({
+      label: 'Index',
+      value:
+        file.indexState === 'missing'
+          ? 'Not on disk any more'
+          : file.indexState === 'failed'
+            ? 'Could not be processed'
+            : `Waiting (${file.indexState})`,
+      problem: file.indexState === 'failed' || file.indexState === 'missing',
     });
   }
 
-  rows.push({
-    icon: 'Folder',
-    label: 'Folder',
-    value: file.folderPath,
-    title: file.folderPath,
-    copy: true,
-    mono: true,
-  });
-  rows.push({
-    icon: 'Hash',
-    label: 'Path',
-    value: file.path,
-    title: file.path,
-    copy: true,
-    mono: true,
-  });
-
   return (
     <div className={cn('flex flex-col', className)}>
-      {rows.map((row) => (
-        <div
-          key={row.label}
-          className="group/meta flex items-center gap-2.5 border-b border-line py-[7px] last:border-b-0"
-        >
-          <span className="flex w-3.5 shrink-0 items-center justify-center text-ink-3">
-            <Icon name={row.icon} size={14} strokeWidth={1.8} />
-          </span>
-          <span className="w-[52px] shrink-0 text-2xs text-ink-3">{row.label}</span>
-          <span
-            className={cn(
-              'min-w-0 flex-1 truncate text-meta text-ink',
-              row.mono && 'font-mono text-[11.5px] text-ink-2',
-            )}
-            title={row.title ?? row.value}
-            data-selectable
+      <dl className="flex flex-col">
+        {rows.map((row) => (
+          <div
+            key={row.label}
+            className="group/meta flex items-baseline gap-3 border-b border-line py-1.5 last:border-b-0"
           >
-            {row.value}
-          </span>
-          {row.copy && (
-            <button
-              type="button"
-              aria-label={`Copy ${row.label}`}
-              onClick={() => void copyPath(file.id)}
-              className="shrink-0 text-ink-3 opacity-0 transition-opacity duration-150 hover:text-ink group-hover/meta:opacity-100"
+            <dt className="w-[76px] shrink-0 text-[10.5px] uppercase tracking-[0.07em] text-ink-3">
+              {row.label}
+            </dt>
+            <dd
+              className={cn(
+                'min-w-0 flex-1 text-meta',
+                row.problem ? 'text-critical' : 'text-ink-2',
+              )}
+              title={row.title ?? row.value}
+              data-selectable
             >
-              <Icon name="Copy" size={12} />
-            </button>
-          )}
+              {row.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {/* Paths get their own block: they are long, copyable, and the one piece of
+          metadata a person routinely needs in full. */}
+      <div className="mt-3 flex flex-col gap-1">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[10.5px] uppercase tracking-[0.07em] text-ink-3">Location</span>
+          <button
+            type="button"
+            onClick={() => void copyPath(file.id)}
+            className="ml-auto inline-flex items-center gap-1 text-2xs text-ink-3 transition-colors duration-150 hover:text-ink"
+          >
+            <Icon name="Copy" size={11} strokeWidth={1.9} />
+            Copy
+          </button>
         </div>
-      ))}
+        <p
+          className="break-all font-mono text-[11px] leading-relaxed text-ink-2"
+          title={file.path}
+          data-selectable
+        >
+          {file.path}
+        </p>
+      </div>
     </div>
   );
 }

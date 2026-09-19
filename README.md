@@ -105,15 +105,63 @@ Requires a Rust toolchain. The first build compiles SQLite, the watcher, and the
 image codecs, so give it a few minutes.
 
 ```bash
-npm run tauri:build           # produces the platform bundle
+npm run tauri:build           # produces the platform bundle (NSIS on Windows)
 ```
+
+#### Windows prerequisites
+
+Two things have to be on the machine before `npm run tauri:build` can succeed:
+
+```powershell
+# 1. Rust. The MSVC toolchain needs the C++ build tools as well.
+winget install Rustlang.Rustup
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+# 2. Python 3.11+ for the local indexer (optional but recommended).
+winget install Python.Python.3.12
+```
+
+Close and reopen the terminal afterwards so `cargo` and `python` land on `PATH`.
+
+#### Where the archive lives
+
+Everything AfterImage writes stays under the app-data directory:
+
+| Path | Contents |
+| --- | --- |
+| `%APPDATA%\app.afterimage.desktop\afterimage.sqlite` | the index: files, OCR text, FTS5, tags, collections, activity |
+| `%APPDATA%\app.afterimage.desktop\thumbnails\` | grid thumbnails (640px) |
+| `%APPDATA%\app.afterimage.desktop\thumbnails\previews\` | the larger derivative the hero shows (1600px) |
+
+Deleting that folder resets the application to a first run. Your own files are
+never moved, renamed or modified — only read.
+
+#### Verifying a build end to end
+
+With the app open:
+
+1. `Choose Folder` → pick a real folder (`%USERPROFILE%\Pictures`, `Downloads`).
+2. The status line counts up; thumbnails appear in the grid as they are written.
+3. Home's hero shows one of your own landscape photographs — or its plain tint if
+you have none indexed yet.
+4. `Ctrl K` → search for a word you know is inside one of your screenshots.
+5. Drop a new file into the folder; it appears without a rescan.
+6. Quit and reopen: the index persists.
 
 ### Local indexer (optional)
 
 ```bash
-npm run service:install       # pip install -r services/indexer/requirements.txt
-npm run service:dev           # http://127.0.0.1:8765  (uvicorn, reload)
+npm run service:venv          # create services/indexer/.venv with a real Python
+npm run service:install       # light stack: OCR, PDF text, vector index (~250 MB)
+npm run service:install:full  # + torch and sentence-transformers, for embeddings
+npm run service:dev           # http://127.0.0.1:8765  (uvicorn)
+npm run service:build         # freeze it into src-tauri/resources/indexer
 ```
+
+These are wrappers around `scripts/service.mjs`, which finds a Python even when
+it is not on `PATH` — on Windows the only `python` on `PATH` is usually the
+Microsoft Store stub, which fails when a script runs it. The script searches the
+per-user install directory and the `py` launcher before giving up.
 
 The service starts without any optional dependency: `/health` reports which
 capabilities are actually present, and the desktop app adapts (OCR unavailable →
@@ -235,6 +283,86 @@ size — the same reasoning that keeps the model optional in the first place.
 
 ---
 
+## How to build AfterImage on Windows
+
+The whole sequence, in order, from a clean machine. PowerShell, from the folder
+that contains this file.
+
+```powershell
+# 1. Node 20+ (22 LTS is what this was developed against)
+winget install OpenJS.NodeJS.LTS          # skip if `node -v` already works
+
+# 2. Rust, plus the MSVC C++ build tools the default toolchain needs
+winget install Rustlang.Rustup
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+# 3. Python 3.11 or 3.12, for the local indexer (optional but recommended)
+winget install Python.Python.3.12
+
+# Close and reopen PowerShell so cargo, rustup and python land on PATH,
+# then confirm all three:
+cargo -V        # cargo 1.8x
+node -v         # v22.x
+python -V       # Python 3.12.x
+
+# 4. Front-end dependencies
+cd <this folder>
+npm install
+
+# 5. The local indexer: OCR, PDF text and the vector index (~250 MB).
+#    For generated titles and similarity search as well:
+#        npm run service:install:full        (adds torch, several GB)
+npm run service:venv
+npm run service:install
+
+# 6. Freeze the indexer into the app. This is what removes the Python
+#    requirement from the machine you install on.
+npm run service:build        # → src-tauri/resources/indexer/afterimage-indexer.exe
+
+# 7. Run it in development (hot reload, real database, real folders)
+npm run tauri:dev
+
+# 8. Build the installer
+npm run tauri:build
+```
+
+### What the build produces
+
+The bundle is NSIS only (`bundle.targets` in `src-tauri/tauri.conf.json`), which
+is the target that needs no extra tooling beyond the prerequisites above.
+Everything lands under `src-tauri/target/release/`:
+
+| Path | What it is |
+| --- | --- |
+| `src-tauri/target/release/afterimage.exe` | the application itself, portable (run it in place) |
+| `src-tauri/target/release/bundle/nsis/AfterImage_0.1.0_x64-setup.exe` | the installer |
+
+The installer is per-user — it does not need administrator rights, and it can be
+copied to another Windows machine as-is. That machine needs no Node, no Rust, no
+Python and no network: the indexer is carried inside `resources/indexer/`, and
+the Rust supervisor starts and stops it with the window.
+
+To confirm what a build shipped, look inside the installed folder for
+`resources\indexer\afterimage-indexer.exe`. If it is there, OCR and similarity
+search work on that machine. If it is not, the application still runs and says
+so in Settings — indexing, thumbnails and full-text search are all in Rust and
+do not depend on the indexer at all.
+
+### Installing and launching
+
+1. Double-click `AfterImage_0.1.0_x64-setup.exe` and follow the installer.
+2. Launch **AfterImage** from the Start menu.
+3. `Choose Folder` → pick something real (`%USERPROFILE%\Pictures`, `Downloads`).
+4. Watch the status line count up; tiles appear as thumbnails are written.
+5. `Ctrl K` and search for a word you know is inside one of your screenshots.
+6. Quit and reopen: the index is where you left it.
+
+The archive lives in `%APPDATA%\app.afterimage.desktop\` — `afterimage.sqlite`,
+`thumbnails\` and `thumbnails\previews\`. Deleting that folder is a full reset;
+your own files are never moved, renamed or modified.
+
+---
+
 ## Status of each layer
 
 | Layer | State |
@@ -247,7 +375,8 @@ size — the same reasoning that keeps the model optional in the first place.
 | Generated titles and labels | Via the local service when CLIP/transformers are installed; otherwise absent by design |
 | Hybrid retrieval | FTS5 + vector fusion + reranking, with per-hit match reasons |
 | Related files | Scored locally from shared tags, shared text terms, folder, project and time |
-| Similar images | Requires the local embedding model; the button is disabled without it |
+| Similar images | Requires the local embedding model; the button appears only for files that have an embedding |
+| Indexer lifecycle | Rust starts and stops the service; packaged by `npm run service:build`, or a `.venv` on a development machine |
 | Volume capacity | Not reported yet, so the storage widget shows what is indexed rather than a fraction of the disk |
 
 ---
@@ -255,10 +384,19 @@ size — the same reasoning that keeps the model optional in the first place.
 ## Design
 
 Light surfaces at `#F4F7F6`, white cards, `rgba(20,33,36,0.08)` borders, a single
-teal accent (`#2F7773`) used sparingly, 18–22px card radii, and shadows weak
-enough to be felt rather than seen. Inter for interface text, JetBrains Mono for
-extracted text. An 8px spacing rhythm, three fixed columns (224px sidebar,
+teal accent (`#2F7773`) used sparingly. Inter for interface text, JetBrains Mono
+for extracted text. An 8px spacing rhythm, three fixed columns (224px sidebar,
 flexible workspace, 320px inspector), and no glow, no neon, no sparkle icons.
+
+Three rules do most of the work:
+
+* **Surfaces are separated by hairlines, not shadows.** A card that needs a drop
+  shadow to read as a card is usually a card that did not need to exist. Shadow
+  is reserved for things that genuinely float: menus, modals, drag previews.
+* **Colour means state.** Success, warning, failure — and the brand accent. A
+  file's type is never encoded in a colour, because a red row has to mean
+  "something is wrong", not "this is a PDF".
+* **One radius scale**, 6 / 8 / 12 / 16. Nothing is rounded for decoration.
 
 The product rule that shapes the interface: **you should never have to organise
 your archive before you can use it.**

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useArchiveStore } from '@/stores/archive';
 import { getHost } from '@/services/host';
-import { cn } from '@/utils/format';
 import { Icon } from '@/components/common/Icon';
 import { Button } from '@/components/common/Button';
 import { LogoMark } from '@/components/common/Logo';
@@ -61,7 +60,7 @@ export function FirstRun() {
           <span className="text-card font-semibold tracking-[-0.01em] text-ink">AfterImage</span>
         </div>
 
-        <h1 className="mt-5 text-[26px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+        <h1 className="mt-5 text-title font-semibold leading-tight tracking-[-0.02em] text-ink">
           Choose folders to build your archive
         </h1>
         <p className="mt-2 max-w-[520px] text-body leading-relaxed text-ink-2">
@@ -71,16 +70,11 @@ export function FirstRun() {
         </p>
 
         <div className="mt-6 flex flex-wrap items-center gap-2.5">
-          {canPick ? (
-            <Button
-              variant="primary"
-              icon="FolderOpen"
-              loading={busy}
-              onClick={() => void choose()}
-            >
+          {canPick && (
+            <Button variant="primary" icon="FolderOpen" loading={busy} onClick={() => void choose()}>
               Choose Folder
             </Button>
-          ) : null}
+          )}
 
           <form
             className="flex min-w-[260px] flex-1 items-center gap-2"
@@ -116,25 +110,17 @@ export function FirstRun() {
           </p>
         )}
 
-        <div className="mt-7 grid grid-cols-2 gap-2.5">
+        {/* What the index understands, as a plain list. Four bordered boxes to
+            say four file types is a lot of frame for very little content. */}
+        <dl className="mt-6 grid max-w-[520px] grid-cols-1 gap-x-8 border-t border-line pt-3 sm:grid-cols-2">
           {SUPPORTED.map((item) => (
-            <div
-              key={item.label}
-              className={cn(
-                'flex items-start gap-2.5 rounded-thumb border border-line bg-surface p-3',
-              )}
-              style={{ boxShadow: 'var(--af-shadow-soft)' }}
-            >
-              <span className="mt-px flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-accent-softer text-accent-ink">
-                <Icon name={item.icon} size={13} strokeWidth={1.9} />
-              </span>
-              <span className="min-w-0">
-                <span className="block text-body font-medium text-ink">{item.label}</span>
-                <span className="block text-2xs text-ink-3">{item.detail}</span>
-              </span>
+            <div key={item.label} className="flex items-baseline gap-2.5 border-b border-line py-2">
+              <Icon name={item.icon} size={13} strokeWidth={1.8} className="relative top-[2px] shrink-0 text-ink-3" />
+              <dt className="w-[86px] shrink-0 text-body text-ink">{item.label}</dt>
+              <dd className="min-w-0 text-2xs text-ink-3">{item.detail}</dd>
             </div>
           ))}
-        </div>
+        </dl>
 
         <p className="mt-6 flex items-center gap-2 text-2xs text-ink-3">
           <Icon name="Shield" size={12} strokeWidth={2} />

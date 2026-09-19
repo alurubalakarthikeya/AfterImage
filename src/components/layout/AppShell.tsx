@@ -85,20 +85,23 @@ export function AppShell() {
     : `${sidebarWidth}px minmax(0, 1fr) auto`;
 
   return (
+    // The window frame is 16px: the sidebar and the inspector sit against it, as
+    // panels do in a desktop app. The workspace adds the other 8px, so page
+    // content lands on the 24px the design calls for.
     <div className="flex h-full min-h-0 flex-col px-4 pb-4">
       <TopBar columns={topBarColumns} />
 
       <div className="grid min-h-0 flex-1 gap-4" style={{ gridTemplateColumns: columns }}>
         <Sidebar />
         <main
-          className="min-h-0 overflow-y-auto overflow-x-hidden pr-0.5"
+          className="min-h-0 overflow-y-auto overflow-x-hidden"
           aria-label="Workspace"
           key={route}
         >
           {/* Keyed by route: navigating away is itself a retry, and boundaries
               are per region so one failed panel never blanks the window. */}
           <ErrorBoundary region="workspace" key={route}>
-            <div className="af-route-enter h-full">
+            <div className="af-route-enter h-full p-2">
               {needsSetup ? <FirstRun /> : <RouteView route={route} />}
             </div>
           </ErrorBoundary>

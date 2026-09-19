@@ -38,8 +38,8 @@ pub const STATE_MISSING: &str = "missing";
 /// The projection every file query uses, so `row_to_file` always lines up.
 const FILE_COLUMNS: &str = "f.id, f.name, f.path, f.kind, f.ext, f.mime, f.bytes, f.width, \
      f.height, f.duration_sec, f.pages, f.folder_id, f.folder_path, f.created_at, f.modified_at, \
-     f.indexed_at, f.favorite, f.thumb_path, f.generated_title, f.description, f.labels, \
-     f.project_id, f.ocr_state, f.ocr_confidence, f.ocr_engine, f.index_state, f.hash, \
+     f.indexed_at, f.favorite, f.thumb_path, f.preview_path, f.generated_title, f.description, \
+     f.labels, f.project_id, f.ocr_state, f.ocr_confidence, f.ocr_engine, f.index_state, f.hash, \
      f.embedding_state, o.text";
 
 const FILE_SOURCE: &str = "FROM files f LEFT JOIN ocr_content o ON o.file_id = f.id";
@@ -98,6 +98,9 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             indexed_at      TEXT NOT NULL,
             favorite        INTEGER NOT NULL DEFAULT 0,
             thumb_path      TEXT,
+            -- Larger derivative of the same image, written for the hero. Kept
+            -- separate so a full-screen panel never decodes a 12 MP original.
+            preview_path    TEXT,
             generated_title TEXT,
             description     TEXT,
             labels          TEXT NOT NULL DEFAULT '[]',
@@ -198,6 +201,30 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         );
         "#,
     )?;
+
+    // Columns added after the first release. `CREATE TABLE IF NOT EXISTS` does
+    // nothing to an existing database, so anything new arrives by ALTER.
+    ensure_column(conn, "files", "preview_path", "TEXT")?;
+
+    Ok(())
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> AppResult<bool> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> AppResult<()> {
+    if !column_exists(conn, table, column)? {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"))?;
+    }
     Ok(())
 }
 
@@ -210,8 +237,8 @@ fn labels_from_json(raw: &str) -> Vec<String> {
 }
 
 fn row_to_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileRecord> {
-    let labels: String = row.get(20)?;
-    let text: Option<String> = row.get(28)?;
+    let labels: String = row.get(21)?;
+    let text: Option<String> = row.get(29)?;
     let ext: String = row.get(4)?;
     Ok(FileRecord {
         id: row.get(0)?,
@@ -232,16 +259,17 @@ fn row_to_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileRecord> {
         indexed_at: row.get(15)?,
         favorite: row.get::<_, i64>(16)? != 0,
         thumb_path: row.get(17)?,
-        generated_title: row.get(18)?,
-        description: row.get(19)?,
+        preview_path: row.get(18)?,
+        generated_title: row.get(19)?,
+        description: row.get(20)?,
         labels: labels_from_json(&labels),
-        project_id: row.get(21)?,
-        ocr_state: row.get(22)?,
-        ocr_confidence: row.get(23)?,
-        ocr_engine: row.get(24)?,
-        index_state: row.get(25)?,
-        hash: row.get(26)?,
-        embedding_state: row.get(27)?,
+        project_id: row.get(22)?,
+        ocr_state: row.get(23)?,
+        ocr_confidence: row.get(24)?,
+        ocr_engine: row.get(25)?,
+        index_state: row.get(26)?,
+        hash: row.get(27)?,
+        embedding_state: row.get(28)?,
         ocr_text: text.filter(|value| !value.trim().is_empty()),
         tag_ids: Vec::new(),
         collection_ids: Vec::new(),
@@ -499,6 +527,59 @@ pub fn set_thumbnail(conn: &Connection, file_id: &str, path: &str) -> AppResult<
         params![file_id, path],
     )?;
     Ok(())
+}
+
+/// Store the larger derivative written for the hero panel.
+pub fn set_preview(conn: &Connection, file_id: &str, path: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE files SET preview_path = ?2 WHERE id = ?1",
+        params![file_id, path],
+    )?;
+    Ok(())
+}
+
+/// The photograph the Home hero should show, chosen from the user's own files.
+///
+/// Deliberately narrow: a landscape photograph, large enough not to look like a
+/// crop, with a preview already on disk. Screenshots, documents and PDF pages are
+/// excluded — a hero built from an error dialog would misrepresent the archive —
+/// and when nothing qualifies this returns `None`, so the interface falls back to
+/// its own tint rather than inventing a scene.
+pub fn hero_candidate(conn: &Connection) -> AppResult<Option<FileRecord>> {
+    // Three tiers, loosest last: a wide photograph at real resolution, then any
+    // photograph, then any image-like file that has a preview.
+    const TIERS: [&str; 3] = [
+        "WHERE f.index_state = 'indexed' AND f.kind = 'photo'
+           AND f.preview_path IS NOT NULL AND f.width >= 1200 AND f.height >= 800
+           AND CAST(f.width AS REAL) / f.height BETWEEN 1.15 AND 2.4
+         ORDER BY ABS(CAST(f.width AS REAL) / f.height - 1.6) ASC,
+                  f.width * f.height DESC, f.created_at DESC LIMIT 8",
+        "WHERE f.index_state = 'indexed' AND f.kind = 'photo' AND f.preview_path IS NOT NULL
+         ORDER BY f.width * f.height DESC, f.created_at DESC LIMIT 8",
+        "WHERE f.index_state = 'indexed' AND f.kind IN ('design', 'video')
+           AND f.preview_path IS NOT NULL
+         ORDER BY f.created_at DESC LIMIT 8",
+    ];
+
+    for tier in TIERS {
+        let sql = format!("SELECT {FILE_COLUMNS} {FILE_SOURCE} {tier}");
+        let mut statement = conn.prepare(&sql)?;
+        let candidates = statement
+            .query_map([], row_to_file)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for candidate in candidates {
+            // A row can outlive the file it names — a preview deleted by hand, an
+            // index carried between machines — so a picture is only offered once
+            // it is confirmed to be on disk.
+            if let Some(preview) = candidate.preview_path.as_deref() {
+                if Path::new(preview).is_file() {
+                    return Ok(Some(candidate));
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 pub fn set_probe(
@@ -927,22 +1008,6 @@ pub fn storage_stats(conn: &Connection, capacity: i64) -> AppResult<StorageStats
         failed_files,
         by_kind,
     })
-}
-
-pub fn queue_counts(conn: &Connection) -> AppResult<(i64, i64, i64, i64)> {
-    let counts = |state: &str| -> AppResult<i64> {
-        Ok(conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE index_state = ?1",
-            params![state],
-            |row| row.get(0),
-        )?)
-    };
-    Ok((
-        counts(STATE_PENDING)?,
-        counts(STATE_PROCESSING)?,
-        counts(STATE_INDEXED)?,
-        counts(STATE_FAILED)?,
-    ))
 }
 
 // ---------------------------------------------------------------------------

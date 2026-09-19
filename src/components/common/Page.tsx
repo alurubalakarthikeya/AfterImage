@@ -20,7 +20,7 @@ export function Page({
   container?: boolean;
 }) {
   return (
-    <div className={cn('flex flex-col gap-4 pb-1', container && '@container', className)}>
+    <div className={cn('flex flex-col gap-4', container && '@container', className)}>
       {children}
     </div>
   );

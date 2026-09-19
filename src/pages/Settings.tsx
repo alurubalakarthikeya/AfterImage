@@ -26,7 +26,7 @@ function Section({
   icon: string;
 }) {
   return (
-    <Card className="p-5">
+    <Card className="p-4">
       <div className="flex items-start gap-3">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-surface-2 text-ink-2">
           <Icon name={icon} size={15} strokeWidth={1.9} />
@@ -137,6 +137,23 @@ export function Settings() {
           {host.name === 'tauri' ? 'Desktop build' : 'Browser preview'}
         </Badge>
       </PageHeader>
+
+      <Section
+        icon="User"
+        title="This account"
+        description="The name is taken from this machine when you first open AfterImage. Change it here and it is only ever stored on disk."
+      >
+        <Row label="Display name" hint="Used for the greeting on Home.">
+          <input
+            type="text"
+            value={settings.userName}
+            onChange={(event) => settings.setUserName(event.target.value)}
+            placeholder="Your name"
+            spellCheck={false}
+            className="h-9 w-[200px] rounded-input border border-line-strong bg-surface px-3 text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-accent/50"
+          />
+        </Row>
+      </Section>
 
       <Section
         icon="Sun"

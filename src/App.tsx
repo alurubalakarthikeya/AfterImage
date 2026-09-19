@@ -3,6 +3,7 @@ import { useAppearance } from '@/hooks/useAppearance';
 import { useDropImport } from '@/hooks/useDropImport';
 import { useHostBridge } from '@/hooks/useHostBridge';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useLocalIdentity } from '@/hooks/useLocalIdentity';
 import { getHost, isTauri } from '@/services/host';
 import { useArchiveStore } from '@/stores/archive';
 import { AppShell } from '@/components/layout/AppShell';
@@ -10,6 +11,7 @@ import { NoticeHost } from '@/components/layout/NoticeHost';
 import { ShortcutsSheet } from '@/components/layout/ShortcutsSheet';
 import { FileContextMenu } from '@/components/files/FileContextMenu';
 import { QuickLook } from '@/components/files/QuickLook';
+import { SimilarPanel } from '@/components/files/SimilarPanel';
 import { CommandPalette } from '@/components/search/CommandPalette';
 import { LogoMark } from '@/components/common/Logo';
 import { Button } from '@/components/common/Button';
@@ -83,6 +85,7 @@ export default function App() {
   useHostBridge();
   useDropImport();
   useKeyboardShortcuts();
+  useLocalIdentity();
 
   const status = useArchiveStore((state) => state.status);
   const error = useArchiveStore((state) => state.error);
@@ -101,6 +104,7 @@ export default function App() {
       <FileContextMenu />
       <CommandPalette />
       <QuickLook />
+      <SimilarPanel />
       <ShortcutsSheet />
       <NoticeHost />
     </>

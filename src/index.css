@@ -35,20 +35,10 @@
   --af-line: rgba(20, 33, 36, 0.08);
   --af-line-strong: rgba(20, 33, 36, 0.14);
 
-  /* Status (muted on purpose — this is not a monitoring dashboard) */
+  /* Status — the only colours that carry meaning: success, warning, failure. */
   --af-positive: #3f7d57;
   --af-caution: #9a6b2e;
   --af-critical: #a8442e;
-
-  /* Low-saturation collection surfaces */
-  --af-mint: #e2efeb;
-  --af-lavender: #e8e7f2;
-  --af-peach: #f5e9e0;
-  --af-blue: #e3eaf3;
-  --af-mint-ink: #2c5f57;
-  --af-lavender-ink: #4c4a70;
-  --af-peach-ink: #7a4f37;
-  --af-blue-ink: #37536f;
 
   /* Code / extracted-text panel */
   --af-code-bg: #131b1a;
@@ -58,10 +48,14 @@
   --af-code-accent: #79c4bb;
   --af-code-critical: #e08a72;
 
-  /* Elevation — deliberately faint */
-  --af-shadow-soft: 0 4px 20px rgba(20, 33, 36, 0.04);
-  --af-shadow-raised: 0 1px 2px rgba(20, 33, 36, 0.04), 0 10px 28px rgba(20, 33, 36, 0.07);
-  --af-shadow-float: 0 12px 40px rgba(20, 33, 36, 0.12), 0 2px 8px rgba(20, 33, 36, 0.06);
+  /* Elevation.
+     Surfaces are separated by hairlines, not shadows: a card that needs a drop
+     shadow to read as a card is usually a card that did not need to exist.
+     Shadow is reserved for things that genuinely float — menus, modals, drag
+     previews. */
+  --af-shadow-soft: none;
+  --af-shadow-raised: 0 1px 2px rgba(20, 33, 36, 0.05), 0 4px 12px rgba(20, 33, 36, 0.05);
+  --af-shadow-float: 0 8px 24px rgba(20, 33, 36, 0.1), 0 1px 3px rgba(20, 33, 36, 0.06);
   --af-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.6);
 
   color-scheme: light;
@@ -91,22 +85,13 @@
   --af-caution: #c99b58;
   --af-critical: #d98066;
 
-  --af-mint: #1b2a27;
-  --af-lavender: #232234;
-  --af-peach: #2c2321;
-  --af-blue: #1e2733;
-  --af-mint-ink: #9ed4c9;
-  --af-lavender-ink: #bdb9e2;
-  --af-peach-ink: #e0b598;
-  --af-blue-ink: #a6c3e0;
-
   --af-code-bg: #0d1413;
   --af-code-ink: #d2dedc;
   --af-code-dim: #6f817e;
 
-  --af-shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.24);
-  --af-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(0, 0, 0, 0.28);
-  --af-shadow-float: 0 16px 44px rgba(0, 0, 0, 0.46), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --af-shadow-soft: none;
+  --af-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.28), 0 4px 12px rgba(0, 0, 0, 0.24);
+  --af-shadow-float: 0 10px 28px rgba(0, 0, 0, 0.44), 0 1px 3px rgba(0, 0, 0, 0.3);
   --af-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 
   color-scheme: dark;
@@ -136,15 +121,6 @@
   --color-caution: var(--af-caution);
   --color-critical: var(--af-critical);
 
-  --color-mint: var(--af-mint);
-  --color-lavender: var(--af-lavender);
-  --color-peach: var(--af-peach);
-  --color-blue: var(--af-blue);
-  --color-mint-ink: var(--af-mint-ink);
-  --color-lavender-ink: var(--af-lavender-ink);
-  --color-peach-ink: var(--af-peach-ink);
-  --color-blue-ink: var(--af-blue-ink);
-
   --color-code: var(--af-code-bg);
   --color-code-ink: var(--af-code-ink);
   --color-code-dim: var(--af-code-dim);
@@ -156,12 +132,22 @@
     'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
 
-  --radius-btn: 12px;
-  --radius-input: 12px;
-  --radius-thumb: 14px;
-  --radius-card: 18px;
-  --radius-card-lg: 22px;
-  --radius-panel: 16px;
+  /* One radius scale: 6 for chips and small controls, 8 for buttons, inputs and
+     menu items, 12 for surfaces, 16 for the two full-bleed panels (hero, modal).
+     Nothing is rounded for decoration; a 18–22px radius on a 40px row reads as
+     a bubble, not a control. */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  --radius-btn: 8px;
+  --radius-input: 8px;
+  --radius-thumb: 10px;
+  --radius-card: 12px;
+  --radius-card-lg: 16px;
+  --radius-panel: 12px;
   --radius-pill: 999px;
 
   --shadow-soft: var(--af-shadow-soft);
@@ -169,6 +155,9 @@
   --shadow-float: var(--af-shadow-float);
   --shadow-inset: var(--af-shadow-inset);
 
+  /* Type scale, in the sizes desktop software actually uses:
+     11 metadata · 12 secondary · 13.5 body · 14 card title · 17 section ·
+     28 page heading · 30 the one hero line. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
   --text-meta: 0.75rem;
@@ -176,10 +165,14 @@
   --text-body: 0.8438rem;
   --text-body--line-height: 1.3rem;
   --text-card: 0.875rem;
-  --text-hero: 3rem;
-  --text-hero--line-height: 1;
-  --text-display: 2.125rem;
-  --text-display--line-height: 1;
+  --text-section: 1.0625rem;
+  --text-section--line-height: 1.4rem;
+  --text-title: 1.75rem;
+  --text-title--line-height: 2rem;
+  --text-hero: 1.875rem;
+  --text-hero--line-height: 1.15;
+  --text-display: 1.5rem;
+  --text-display--line-height: 1.75rem;
 }
 
 /* ==========================================================================
@@ -342,13 +335,6 @@
   white-space: nowrap;
 }
 
-@utility grid-masonry {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--masonry-col, 220px), 1fr));
-  grid-auto-rows: 8px;
-  grid-auto-flow: dense;
-  gap: 0 16px;
-}
 
 @utility scroll-fade-y {
   mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
@@ -418,7 +404,7 @@
 
 .af-fade-in,
 .af-route-enter {
-  animation: af-rise 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: af-rise 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .af-pulse-slow {

@@ -110,6 +110,45 @@ pub fn file_detail(state: SharedState<'_>, file_id: String) -> AppResult<Option<
     db::file_by_id(&conn, &file_id)
 }
 
+/// The photograph the Home hero shows, taken from the user's own library.
+///
+/// `None` is a normal answer: with no suitable photograph indexed the interface
+/// renders its own neutral wash rather than a bundled image standing in for the
+/// user's archive.
+#[tauri::command]
+pub fn hero_image(state: SharedState<'_>) -> AppResult<Option<FileRecord>> {
+    let conn = state.db()?;
+    db::hero_candidate(&conn)
+}
+
+/// The local account, so the greeting on Home belongs to whoever is using the
+/// machine instead of a name compiled into the application.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OsIdentity {
+    pub user_name: Option<String>,
+    pub home_dir: Option<String>,
+}
+
+#[tauri::command]
+pub fn os_identity() -> OsIdentity {
+    let user_name = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let home_dir = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+
+    OsIdentity {
+        user_name,
+        home_dir,
+    }
+}
+
 #[tauri::command]
 pub fn storage_stats(state: SharedState<'_>) -> AppResult<StorageStats> {
     let conn = state.db()?;
@@ -330,6 +369,10 @@ pub fn save_settings(state: SharedState<'_>, patch: serde_json::Value) -> AppRes
             db::set_setting(&conn, "service_enabled", if value { "true" } else { "false" })?;
             state.service_enabled.store(value, Ordering::Relaxed);
         }
+        if let Some(value) = patch.get("llmEnabled").and_then(|value| value.as_bool()) {
+            db::set_setting(&conn, "llm_enabled", if value { "true" } else { "false" })?;
+            state.llm_enabled.store(value, Ordering::Relaxed);
+        }
     }
     Ok(())
 }
@@ -519,6 +562,33 @@ pub fn open_path(path: String) -> AppResult<()> {
     open_with_system(&target)
 }
 
+/// Hand a file to the operating system's "open with" chooser.
+///
+/// Windows exposes the picker through `shell32.dll,OpenAs_RunDLL`; elsewhere the
+/// system default handler is the closest equivalent, so that is what is used
+/// rather than pretending a chooser exists.
+#[tauri::command]
+pub fn open_with(path: String) -> AppResult<()> {
+    let target = PathBuf::from(shellexpand(&path));
+    if !target.exists() {
+        return Err(AppError::NotFound(format!("{} no longer exists", target.display())));
+    }
+
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("rundll32.exe")
+        .arg("shell32.dll,OpenAs_RunDLL")
+        .arg(&target)
+        .spawn();
+
+    #[cfg(not(target_os = "windows"))]
+    let result = open_with_system(&target).map(|_| ());
+
+    result.map_err(|error| {
+        AppError::Other(format!("could not open {} with another app: {error}", target.display()))
+    })?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn reveal_path(path: String) -> AppResult<()> {
     let target = PathBuf::from(shellexpand(&path));
@@ -641,10 +711,11 @@ pub fn apply_settings(state: &Arc<AppState>) {
             db::get_setting(&conn, "service_port").ok().flatten(),
             db::get_setting(&conn, "service_enabled").ok().flatten(),
             db::get_setting(&conn, "semantic_search").ok().flatten(),
+            db::get_setting(&conn, "llm_enabled").ok().flatten(),
         )
     });
 
-    let Some((port, enabled, semantic)) = settings else {
+    let Some((port, enabled, semantic, llm)) = settings else {
         return;
     };
     if let Some(port) = port.and_then(|value| value.parse::<u16>().ok()) {
@@ -655,6 +726,9 @@ pub fn apply_settings(state: &Arc<AppState>) {
     }
     if let Some(semantic) = semantic {
         state.semantic_enabled.store(semantic == "true", Ordering::Relaxed);
+    }
+    if let Some(llm) = llm {
+        state.llm_enabled.store(llm == "true", Ordering::Relaxed);
     }
 }
 

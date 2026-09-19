@@ -75,6 +75,11 @@ export interface ArchiveFile {
   /** Absolute path to the generated thumbnail, when one exists. */
   thumbPath: string | null;
   /**
+   * Larger derivative of the same picture, written for the hero panel. Only
+   * image-like files have one; it is always generated from the user's own file.
+   */
+  previewPath?: string | null;
+  /**
    * Title derived from the file's own content by the local vision model —
    * searchable metadata only. The file on disk keeps its original name.
    */

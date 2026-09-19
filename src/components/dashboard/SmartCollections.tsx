@@ -1,84 +1,87 @@
-import type { ArchiveCollection, SurfaceTone } from '@/types';
+import type { ArchiveCollection } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useCollectionStore } from '@/stores/collections';
 import { useUIStore } from '@/stores/ui';
 import { cn, formatCount } from '@/utils/format';
-import { Card, SectionHeader } from '@/components/common/Card';
+import { SectionHeader } from '@/components/common/Card';
 import { Icon } from '@/components/common/Icon';
 import { AssetImage } from '@/components/common/AssetImage';
-
-const TONE: Record<SurfaceTone, { bg: string; ink: string }> = {
-  mint: { bg: 'bg-mint', ink: 'text-mint-ink' },
-  lavender: { bg: 'bg-lavender', ink: 'text-lavender-ink' },
-  peach: { bg: 'bg-peach', ink: 'text-peach-ink' },
-  blue: { bg: 'bg-blue', ink: 'text-blue-ink' },
-  neutral: { bg: 'bg-surface-2', ink: 'text-ink-2' },
-};
 
 /**
  * Collections.
  *
- * Every card is a real collection row with a real file count and a collage built
- * from thumbnails of files that are actually in it. There are no placeholders
- * named "Design Inspiration" invented for the screenshot — a collection appears
- * here because it exists in the database, and when none do, this says so.
+ * Every row is a real collection with a real count and a strip built from
+ * thumbnails of files that are genuinely in it. There are no cards named
+ * "Design Inspiration" invented for the screenshot, and no pastel per
+ * collection: a collection is identified by its name, not by a colour it was
+ * assigned at random.
  */
 export function SmartCollections({ className }: { className?: string }) {
   const collections = useArchiveStore((state) => state.collections);
   const open = useCollectionStore((state) => state.open);
   const navigate = useUIStore((state) => state.navigate);
 
-  const cards = [...collections].sort((a, b) => b.fileCount - a.fileCount).slice(0, 4);
+  const rows = [...collections].sort((a, b) => b.fileCount - a.fileCount).slice(0, 4);
+
+  if (rows.length === 0) {
+    return (
+      <section className={cn('flex flex-col', className)} aria-label="Collections">
+        <SectionHeader
+          title="Collections"
+          actionLabel="All collections"
+          onAction={() => navigate('collections')}
+        />
+        <div className="mt-3 flex items-start gap-3 rounded-thumb border border-dashed border-line-strong px-4 py-5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-3">
+            <Icon name="Layers" size={15} strokeWidth={1.8} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-body font-medium text-ink">No collections yet</p>
+            <p className="mt-0.5 text-meta leading-relaxed text-ink-2">
+              A collection is a saved view over this archive — a tag, a project, a folder or a
+              search. Create the first one from the sidebar or from any file's context menu.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
-    <Card className={cn('flex flex-col p-4', className)}>
+    <section className={cn('flex flex-col', className)} aria-label="Collections">
       <SectionHeader
         title="Collections"
-        subtitle="Smart rules and anything you grouped by hand"
         actionLabel="All collections"
         onAction={() => navigate('collections')}
       />
 
-      {cards.length === 0 ? (
-        <div className="mt-4 flex flex-1 flex-col items-start justify-center gap-2 rounded-panel border border-dashed border-line-strong p-5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-surface-2 text-ink-3">
-            <Icon name="Layers" size={16} strokeWidth={1.8} />
-          </span>
-          <p className="text-card font-semibold text-ink">No collections yet</p>
-          <p className="max-w-[380px] text-meta leading-relaxed text-ink-2">
-            Collections group files across folders. Create one from the sidebar, or from any file's
-            context menu, and its contents resolve from tags, projects and saved searches.
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate('collections')}
-            className="mt-1 inline-flex items-center gap-1.5 rounded-btn border border-line-strong px-3 py-1.5 text-meta font-medium text-ink transition-colors duration-150 hover:bg-surface-3"
-          >
-            Create a collection
-            <Icon name="ArrowRight" size={12} strokeWidth={2.2} />
-          </button>
-        </div>
-      ) : (
-        <div className="mt-4 grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
-          {cards.map((card) => (
-            <CollectionCard key={card.id} collection={card} onOpen={() => open(card.id)} />
-          ))}
-        </div>
-      )}
-    </Card>
+      <ul className="mt-2 divide-y divide-line">
+        {rows.map((collection) => (
+          <li key={collection.id}>
+            <CollectionRow
+              collection={collection}
+              onOpen={() => open(collection.id)}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
-function CollectionCard({
+/**
+ * The `surface` column on a collection is still stored — it is part of the data
+ * model — but it is intentionally not rendered. Colour in this interface means
+ * state, and a collection is not a state.
+ */
+function CollectionRow({
   collection,
   onOpen,
 }: {
   collection: ArchiveCollection;
   onOpen: () => void;
 }) {
-  const tone = TONE[collection.surface];
-  const preview = collection.preview.slice(0, 4);
-
+  const preview = collection.preview.slice(0, 3);
   const rule =
     collection.rule?.tags?.length
       ? `Tagged ${collection.rule.tags.join(', ')}`
@@ -94,49 +97,33 @@ function CollectionCard({
     <button
       type="button"
       onClick={onOpen}
-      className={cn(
-        'group/sc flex flex-col justify-between gap-3 rounded-thumb p-3.5 text-left transition-[transform,filter] duration-150 hover:-translate-y-px hover:brightness-[0.985]',
-        tone.bg,
-      )}
+      className="group/sc flex w-full items-center gap-3 py-2.5 text-left"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className={cn('truncate text-card font-semibold tracking-[-0.01em]', tone.ink)}>
-            {collection.name}
-          </div>
-          <div className={cn('mt-0.5 truncate text-2xs opacity-70', tone.ink)}>
-            {formatCount(collection.fileCount)} files · {rule}
-          </div>
-        </div>
-        <span
-          className={cn(
-            'flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-white/55 transition-transform duration-150 group-hover/sc:translate-x-0.5',
-            tone.ink,
-          )}
-        >
-          <Icon name="ArrowRight" size={13} strokeWidth={2.2} />
-        </span>
-      </div>
-
-      <div className="flex items-end gap-1.5">
+      <span className="flex h-11 w-16 shrink-0 items-center gap-0.5 overflow-hidden rounded-[7px] border border-line bg-surface-2">
         {preview.length === 0
           ? [0, 1, 2].map((index) => (
-              <span
-                key={index}
-                className="block flex-1 overflow-hidden rounded-[8px] border border-white/50 bg-white/40"
-                style={{ aspectRatio: '1' }}
-              />
+              <span key={index} className="block h-full flex-1 bg-surface-3" />
             ))
-          : preview.map((path, index) => (
-              <span
-                key={path}
-                className="relative block flex-1 overflow-hidden rounded-[8px] border border-white/50 bg-white/50"
-                style={{ aspectRatio: '1', transform: `translateY(${index % 2 === 0 ? 0 : -3}px)` }}
-              >
+          : preview.map((path) => (
+              <span key={path} className="relative block h-full flex-1 overflow-hidden">
                 <AssetImage path={path} alt="" />
               </span>
             ))}
-      </div>
+      </span>
+
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-body font-medium text-ink">{collection.name}</span>
+        <span className="mt-px block truncate text-2xs text-ink-3">
+          {formatCount(collection.fileCount)} files · {rule}
+        </span>
+      </span>
+
+      <Icon
+        name="ChevronRight"
+        size={14}
+        strokeWidth={2}
+        className="shrink-0 text-ink-3 transition-transform duration-150 group-hover/sc:translate-x-0.5"
+      />
     </button>
   );
 }

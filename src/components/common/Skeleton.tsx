@@ -10,14 +10,14 @@ export function Skeleton({ className }: { className?: string }) {
   );
 }
 
+/** Matches the gallery tile: a 4:3 picture and two lines of caption. */
 export function SkeletonCard({ aspect = 4 / 3 }: { aspect?: number }) {
   return (
-    <div className="overflow-hidden rounded-card border border-line bg-surface">
-      <Skeleton className="w-full rounded-none" />
-      <div className="w-full" style={{ aspectRatio: String(aspect) }}>
+    <div className="flex flex-col">
+      <div className="w-full overflow-hidden rounded-thumb" style={{ aspectRatio: String(aspect) }}>
         <Skeleton className="h-full w-full rounded-none" />
       </div>
-      <div className="space-y-2 p-3">
+      <div className="mt-1.5 space-y-1.5">
         <Skeleton className="h-3 w-3/4" />
         <Skeleton className="h-2.5 w-1/2" />
       </div>

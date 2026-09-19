@@ -1,108 +1,34 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { ArchiveFile, FileKind } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { KIND_EMPTY, KIND_ICON } from '@/stores/selectors';
 import { useUIStore } from '@/stores/ui';
-import { aspectForFile } from '@/components/common/FileThumb';
 import { EmptyState } from '@/components/common/EmptyState';
 import { SkeletonCard } from '@/components/common/Skeleton';
 import { FileCard } from './FileCard';
 
-/** Placeholder tiles shown while the first page is being read. */
-function SkeletonTiles({ className }: { className?: string }) {
-  return (
-    <div
-      className={['grid grid-cols-2 gap-4 sm:grid-cols-3', className].filter(Boolean).join(' ')}
-      aria-hidden="true"
-    >
-      {[1.33, 0.75, 1, 1.33, 1, 0.75].map((aspect, index) => (
-        <SkeletonCard key={index} aspect={aspect} />
-      ))}
-    </div>
-  );
-}
-
-const ROW_UNIT = 8;
-const GAP = 16;
-const META_HEIGHT = 52;
-/** Wide feature cards are paced through the grid rather than clustered. */
-const WIDE_EVERY = 9;
-
-interface LayoutItem {
-  file: ArchiveFile;
-  colSpan: number;
-  rowSpan: number;
-  thumbHeight: number;
-}
-
 /**
- * Masonry layout.
+ * The gallery.
  *
- * CSS columns would be simpler, but they flow top-to-bottom, which ruins a
- * "most recent first" grid. So we measure the container, work out the column
- * width, then give every card an explicit row span in a dense grid: left to
- * right ordering, genuine size variety, no layout library.
+ * A uniform grid of equal tiles, the way every file and photo browser works:
+ * predictable column count, predictable row height, captions on one line. An
+ * earlier version sized every tile from its own aspect ratio, which was
+ * visually busy and made scanning a grid of 200 screenshots materially harder —
+ * variety in a file browser is noise, not personality.
+ *
+ * Selection lives in the UI store, keyboard movement in `useKeyboardShortcuts`
+ * (which walks the DOM in visual order), and range selection is resolved by the
+ * store from the ordered ids this view supplies.
  */
-function useMasonryLayout(files: ArchiveFile[], minColumn: number, enabled: boolean) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    setWidth(element.clientWidth);
-    const observer = new ResizeObserver((entries) => {
-      const next = entries[0]?.contentRect.width ?? 0;
-      setWidth((current) => (Math.abs(current - next) > 1 ? next : current));
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  const layout = useMemo(() => {
-    if (!enabled || width <= 0) {
-      return {
-        columns: 1,
-        items: files.map<LayoutItem>((file) => ({
-          file,
-          colSpan: 1,
-          rowSpan: 0,
-          thumbHeight: 0,
-        })),
-        masonry: false,
-      };
-    }
-
-    const columns = Math.max(1, Math.floor((width + GAP) / (minColumn + GAP)));
-    const columnWidth = (width - GAP * (columns - 1)) / columns;
-
-    const items = files.map<LayoutItem>((file, index) => {
-      const wide = columns >= 3 && index > 0 && index % WIDE_EVERY === 0;
-      const colSpan = wide ? 2 : 1;
-      const itemWidth = columnWidth * colSpan + GAP * (colSpan - 1);
-      const aspect = aspectForFile(file) ?? 1.4;
-      const thumbHeight = Math.round(itemWidth / aspect);
-      const total = thumbHeight + META_HEIGHT;
-      const rowSpan = Math.ceil((total + GAP) / (ROW_UNIT + GAP));
-      return { file, colSpan, rowSpan, thumbHeight };
-    });
-
-    return { columns, items, masonry: true };
-  }, [files, minColumn, width, enabled]);
-
-  return { ref, layout };
-}
-
 export function FileGrid({
   files,
-  minColumn = 220,
+  minColumn = 208,
   className,
   emptyTitle,
   emptyDescription,
   emptyAction,
   kind,
   onOpen,
-  animate = false,
   loading = false,
 }: {
   files: ArchiveFile[];
@@ -117,18 +43,30 @@ export function FileGrid({
   /** Forces a kind-specific empty state for pages that know their kind. */
   kind?: FileKind;
   onOpen?: (file: ArchiveFile) => void;
-  animate?: boolean;
   /** True while the page is still being read from the index. */
   loading?: boolean;
 }) {
   const selectedIds = useUIStore((state) => state.selectedFileIds);
   const openFile = useArchiveStore((state) => state.openFile);
-  const { ref, layout } = useMasonryLayout(files, minColumn, true);
+  const order = useMemo(() => files.map((file) => file.id), [files]);
 
   const handleOpen = onOpen ?? ((file: ArchiveFile) => void openFile(file.id));
 
   if (files.length === 0) {
-    if (loading) return <SkeletonTiles className={className} />;
+    if (loading) {
+      return (
+        <div
+          className={['grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4', className]
+            .filter(Boolean)
+            .join(' ')}
+          aria-hidden="true"
+        >
+          {Array.from({ length: 8 }).map((_, index) => (
+            <SkeletonCard key={index} aspect={4 / 3} />
+          ))}
+        </div>
+      );
+    }
     const fallback = kind ? KIND_EMPTY[kind] : null;
     return (
       <EmptyState
@@ -142,39 +80,24 @@ export function FileGrid({
 
   return (
     <div
-      ref={ref}
       role="listbox"
       aria-label="Files"
       aria-multiselectable
       className={className}
-      style={
-        layout.masonry
-          ? {
-              display: 'grid',
-              gridTemplateColumns: `repeat(${layout.columns}, minmax(0, 1fr))`,
-              gridAutoRows: `${ROW_UNIT}px`,
-              gridAutoFlow: 'dense',
-              gap: `${GAP}px`,
-            }
-          : { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: `${GAP}px` }
-      }
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${minColumn}px), 1fr))`,
+        gap: '20px 16px',
+      }}
     >
-      {layout.items.map((item, index) => (
-        <div
-          key={item.file.id}
-          style={
-            layout.masonry ? { gridColumn: `span ${item.colSpan}`, gridRow: `span ${item.rowSpan}` } : undefined
-          }
-          className={animate ? 'af-fade-in' : undefined}
-          data-animate-index={animate ? index : undefined}
-        >
-          <FileCard
-            file={item.file}
-            selected={selectedIds.includes(item.file.id)}
-            thumbHeight={layout.masonry ? item.thumbHeight : undefined}
-            onOpen={handleOpen}
-          />
-        </div>
+      {files.map((file) => (
+        <FileCard
+          key={file.id}
+          file={file}
+          order={order}
+          selected={selectedIds.includes(file.id)}
+          onOpen={handleOpen}
+        />
       ))}
     </div>
   );

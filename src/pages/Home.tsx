@@ -18,7 +18,8 @@ import { ActivityTimeline } from '@/components/dashboard/ActivityTimeline';
 export function Home() {
   return (
     <Page container>
-      {/* The spec's workspace grid: hero flexible, stats a fixed 300px rail. */}
+      {/* Header band: the archive's summary, then the four counts that describe
+          its shape. The files themselves start immediately below. */}
       <div className="grid gap-4 @3xl:grid-cols-[minmax(0,1fr)_300px]">
         <HeroCard />
         <QuickStats />
@@ -26,7 +27,7 @@ export function Home() {
 
       <RecentFiles />
 
-      <div className="grid gap-4 @3xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid gap-6 @3xl:grid-cols-[minmax(0,1fr)_320px]">
         <SmartCollections />
         <ActivityTimeline limit={7} />
       </div>

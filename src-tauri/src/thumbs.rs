@@ -18,6 +18,11 @@ use image::ImageFormat;
 /// a Retina display without holding large decodes in memory.
 const MAX_EDGE: u32 = 640;
 
+/// Longest edge of the derivative written for the hero panel. Big enough to
+/// cover a 1440-wide window on a high-density display, small enough that the
+/// original never has to be decoded at full size on screen.
+const PREVIEW_MAX_EDGE: u32 = 1600;
+
 pub fn dimensions(path: &Path) -> Option<(i64, i64)> {
     image::image_dimensions(path)
         .ok()
@@ -51,22 +56,44 @@ pub fn generate(dir: &Path, file_id: &str, path: &str, kind: &str) -> Option<Str
     let target = dir.join(format!("{file_id}.jpg"));
 
     match kind {
-        "photo" | "screenshot" | "design" => write_still(source, &target)?,
-        "video" => write_video_frame(source, &target)?,
+        "photo" | "screenshot" | "design" => write_still(source, &target, MAX_EDGE)?,
+        "video" => write_video_frame(source, &target, MAX_EDGE)?,
         _ => return None,
     }
 
     Some(target.to_string_lossy().to_string())
 }
 
-fn write_still(source: &Path, target: &Path) -> Option<()> {
+/// The same picture at presentation size, for the Home hero.
+///
+/// Written into a `previews/` subfolder of the thumbnail directory, which is the
+/// only path the webview is allowed to read through the asset protocol.
+pub fn generate_preview(dir: &Path, file_id: &str, path: &str, kind: &str) -> Option<String> {
+    let source = Path::new(path);
+    if !source.is_file() {
+        return None;
+    }
+    let previews = dir.join("previews");
+    std::fs::create_dir_all(&previews).ok()?;
+    let target = previews.join(format!("{file_id}.jpg"));
+
+    match kind {
+        "photo" | "screenshot" | "design" => write_still(source, &target, PREVIEW_MAX_EDGE)?,
+        "video" => write_video_frame(source, &target, PREVIEW_MAX_EDGE)?,
+        _ => return None,
+    }
+
+    Some(target.to_string_lossy().to_string())
+}
+
+fn write_still(source: &Path, target: &Path, max_edge: u32) -> Option<()> {
     let decoded = image::open(source).ok()?;
-    let small = decoded.thumbnail(MAX_EDGE, MAX_EDGE);
+    let small = decoded.thumbnail(max_edge, max_edge);
     small.save_with_format(target, ImageFormat::Jpeg).ok()?;
     Some(())
 }
 
-fn write_video_frame(source: &Path, target: &Path) -> Option<()> {
+fn write_video_frame(source: &Path, target: &Path, max_edge: u32) -> Option<()> {
     if !ffmpeg_available() {
         return None;
     }
@@ -77,7 +104,7 @@ fn write_video_frame(source: &Path, target: &Path) -> Option<()> {
             "-frames:v",
             "1",
             "-vf",
-            &format!("scale={MAX_EDGE}:-2"),
+            &format!("scale={max_edge}:-2"),
         ])
         .arg(target)
         .stdout(std::process::Stdio::null())
@@ -92,7 +119,8 @@ fn write_video_frame(source: &Path, target: &Path) -> Option<()> {
     }
 }
 
-/// Remove a thumbnail that is no longer needed (file deleted from the index).
+/// Remove the derivatives of a file that is no longer in the index.
 pub fn remove(dir: &Path, file_id: &str) {
     let _ = std::fs::remove_file(dir.join(format!("{file_id}.jpg")));
+    let _ = std::fs::remove_file(dir.join("previews").join(format!("{file_id}.jpg")));
 }

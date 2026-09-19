@@ -137,7 +137,9 @@ export function TopBar({ columns }: { columns: string }) {
         <IndexStatus />
       </div>
 
-      <div className="flex min-w-0 items-center gap-3">
+      {/* Indented to the workspace's own inset, so the search field starts on the
+          same vertical line as the first card of every page. */}
+      <div className="flex min-w-0 items-center gap-3 pl-2">
         <SearchBar />
       </div>
 

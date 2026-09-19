@@ -3,15 +3,8 @@ import { useArchiveStore } from '@/stores/archive';
 import { statTiles } from '@/stores/selectors';
 import { useUIStore } from '@/stores/ui';
 import { cn, formatCount } from '@/utils/format';
-import { Card, SectionHeader } from '@/components/common/Card';
+import { SectionHeader } from '@/components/common/Card';
 import { Icon } from '@/components/common/Icon';
-
-const TONE_SURFACE: Record<string, string> = {
-  mint: 'bg-mint text-mint-ink',
-  lavender: 'bg-lavender text-lavender-ink',
-  peach: 'bg-peach text-peach-ink',
-  blue: 'bg-blue text-blue-ink',
-};
 
 const ROUTE_FOR_KIND: Record<string, RouteId> = {
   photo: 'photos',
@@ -20,37 +13,50 @@ const ROUTE_FOR_KIND: Record<string, RouteId> = {
   video: 'videos',
 };
 
-/** Four numbers, four tints. Quiet enough to sit beside the hero. */
+/**
+ * Four counts.
+ *
+ * A 2×2 of tinted tiles was doing the one thing a statistics panel must not do:
+ * making four numbers of equal weight look like four different things. It is a
+ * hairline grid now — the figures are the only thing with weight.
+ */
 export function QuickStats({ className }: { className?: string }) {
   const totals = useArchiveStore((state) => state.totals);
   const navigate = useUIStore((state) => state.navigate);
   const tiles = statTiles(totals);
 
   return (
-    <Card className={cn('flex h-[250px] flex-col p-4', className)}>
-      <SectionHeader title="Quick Stats" actionLabel="View all" onAction={() => navigate('all')} />
+    <section
+      className={cn('flex h-[188px] flex-col rounded-card border border-line bg-surface p-4', className)}
+      aria-label="Library statistics"
+    >
+      <SectionHeader title="Library" actionLabel="View all" onAction={() => navigate('all')} />
 
-      <div className="mt-4 grid flex-1 grid-cols-2 grid-rows-2 gap-2.5">
-        {tiles.map((tile) => (
+      <div className="mt-3 grid flex-1 grid-cols-2 grid-rows-2">
+        {tiles.map((tile, index) => (
           <button
             key={tile.label}
             type="button"
             onClick={() => navigate(ROUTE_FOR_KIND[tile.kind] ?? 'all')}
             className={cn(
-              'flex flex-col justify-between rounded-thumb p-3 text-left transition-[transform,filter] duration-150 hover:-translate-y-px hover:brightness-[0.985]',
-              TONE_SURFACE[tile.tone],
+              'flex flex-col items-start justify-center gap-0.5 rounded-[6px] px-3 text-left transition-colors duration-150 hover:bg-surface-2',
+              // A cross of hairlines: the counts are separated by structure, not
+              // by four competing background colours.
+              index % 2 === 1 && 'border-l border-line',
+              index >= 2 && 'border-t border-line',
+              index % 2 === 0 && 'pl-0',
             )}
           >
-            <span className="flex items-center justify-between">
-              <span className="text-2xs font-medium opacity-75">{tile.label}</span>
-              <Icon name={tile.icon} size={13} strokeWidth={1.9} className="opacity-45" />
+            <span className="flex items-center gap-1.5 text-2xs text-ink-3">
+              <Icon name={tile.icon} size={12} strokeWidth={1.9} />
+              {tile.label}
             </span>
-            <span className="text-[19px] font-semibold tabular-nums tracking-[-0.02em]">
+            <span className="text-[17px] font-semibold tabular-nums leading-tight tracking-[-0.01em] text-ink">
               {formatCount(tile.value)}
             </span>
           </button>
         ))}
       </div>
-    </Card>
+    </section>
   );
 }

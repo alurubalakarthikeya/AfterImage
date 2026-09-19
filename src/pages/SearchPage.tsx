@@ -141,12 +141,12 @@ export function SearchPage() {
           style={{ boxShadow: 'var(--af-shadow-soft)' }}
         >
           <SearchFilters />
-          <div className="flex items-start gap-2 rounded-thumb bg-surface-2 p-2.5 text-2xs leading-relaxed text-ink-3">
-            <Icon name={semanticAvailable ? 'Sparkle' : 'Info'} size={12} className="mt-px shrink-0" />
+          <div className="flex items-start gap-2 border-t border-line pt-3 text-2xs leading-relaxed text-ink-3">
+            <Icon name="Info" size={12} className="mt-px shrink-0" />
             <span>
               {semanticAvailable
-                ? 'Semantic search is on: results include vector matches from the local model.'
-                : 'Ranking uses the local full-text index over filenames, extracted text, tags and folders. Enable the local embedding model in settings to add similarity matches.'}
+                ? 'Results include similarity matches from the local embedding model, alongside exact matches on names, text, tags and folders.'
+                : 'Ranking uses the local full-text index over filenames, extracted text, tags and folders. Turning on the local embedding model in settings adds similarity matches.'}
             </span>
           </div>
         </aside>

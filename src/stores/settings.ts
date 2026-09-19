@@ -60,7 +60,10 @@ export const useSettingsStore = create<SettingsState>()(
       llmEnabled: false,
       llmModel: 'llama3.2:3b',
       servicePort: 8765,
-      userName: 'Karthikeya',
+      // Filled in from the operating system's own account name on first launch
+      // (see `useLocalIdentity`). Empty means "ask the machine", never a name
+      // compiled into the application.
+      userName: '',
       accountLabel: 'Local Account',
       lastBackupAt: null,
 

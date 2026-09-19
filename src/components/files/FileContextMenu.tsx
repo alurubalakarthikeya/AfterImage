@@ -92,6 +92,7 @@ export function FileContextMenu() {
   const copyPath = useArchiveStore((state) => state.copyPath);
   const toggleFavorite = useArchiveStore((state) => state.toggleFavorite);
   const renameFile = useArchiveStore((state) => state.renameFile);
+  const openWith = useArchiveStore((state) => state.openWith);
   const deleteFiles = useArchiveStore((state) => state.deleteFiles);
   const addTag = useArchiveStore((state) => state.addTag);
   const toggleCollection = useCollectionStore((state) => state.toggleFile);
@@ -118,7 +119,8 @@ export function FileContextMenu() {
     }
     return [
       { id: 'open', label: 'Open', icon: 'ExternalLink', shortcut: '↵' },
-      { id: 'reveal', label: 'Open location', icon: 'FolderOpen', shortcut: 'R' },
+      { id: 'open-with', label: 'Open with…', icon: 'AppWindow' },
+      { id: 'reveal', label: 'Show in folder', icon: 'FolderOpen', shortcut: 'R' },
       {
         id: 'collections',
         label: 'Add to collection',
@@ -159,6 +161,9 @@ export function FileContextMenu() {
     switch (id) {
       case 'open':
         void openFile(file.id);
+        break;
+      case 'open-with':
+        void openWith(file.id);
         break;
       case 'reveal':
         void revealFile(file.id);

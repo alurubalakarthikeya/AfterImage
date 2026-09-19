@@ -34,17 +34,6 @@ export const KIND_SINGULAR: Record<FileKind, string> = {
   other: 'File',
 };
 
-export const KIND_TONE: Record<FileKind, string> = {
-  photo: 'mint',
-  screenshot: 'blue',
-  document: 'peach',
-  video: 'lavender',
-  audio: 'mint',
-  design: 'lavender',
-  archive: 'peach',
-  other: 'neutral',
-};
-
 /** Lucide icon per kind, used by the placeholder when there is no thumbnail. */
 export const KIND_ICON: Record<FileKind, string> = {
   photo: 'Image',
@@ -121,27 +110,15 @@ export interface StatTile {
   value: number;
   kind: FileKind;
   icon: string;
-  tone: 'mint' | 'lavender' | 'peach' | 'blue';
 }
 
+/** The four counts a photo archive is actually measured in. */
 export function statTiles(totals: ArchiveTotals): StatTile[] {
   return [
-    { label: 'Images', value: totals.byKind.photo, kind: 'photo', icon: 'Image', tone: 'mint' },
-    {
-      label: 'Screenshots',
-      value: totals.byKind.screenshot,
-      kind: 'screenshot',
-      icon: 'MonitorSmartphone',
-      tone: 'blue',
-    },
-    {
-      label: 'Documents',
-      value: totals.byKind.document,
-      kind: 'document',
-      icon: 'FileText',
-      tone: 'peach',
-    },
-    { label: 'Videos', value: totals.byKind.video, kind: 'video', icon: 'Film', tone: 'lavender' },
+    { label: 'Images', value: totals.byKind.photo, kind: 'photo', icon: 'Image' },
+    { label: 'Screenshots', value: totals.byKind.screenshot, kind: 'screenshot', icon: 'MonitorSmartphone' },
+    { label: 'Documents', value: totals.byKind.document, kind: 'document', icon: 'FileText' },
+    { label: 'Videos', value: totals.byKind.video, kind: 'video', icon: 'Film' },
   ];
 }
 
