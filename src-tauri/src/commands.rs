@@ -58,35 +58,68 @@ fn status_of(state: &AppState) -> IndexStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+/// A last-resort channel from the renderer.
+///
+/// A packaged webview has no console anyone can open, so a failure while the
+/// interface is starting is otherwise invisible — a blank window and nothing
+/// else. The boot guard calls this so that failure lands in the application log
+/// where it can actually be read and acted on.
+#[tauri::command]
+pub fn frontend_probe(message: String) {
+    log::warn!("frontend: {message}");
+}
+
+// ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn archive_snapshot(state: SharedState<'_>) -> AppResult<ArchiveSnapshot> {
-    let conn = state.db()?;
-    let (recent, _) = db::list_files(
-        &conn,
-        &FileQuery {
-            limit: Some(60),
-            ..FileQuery::default()
-        },
-    )?;
+pub async fn archive_snapshot(state: SharedState<'_>) -> AppResult<ArchiveSnapshot> {
+    // The database lock is taken exactly once, for the reads, and released before
+    // `status_of` is called — because `status_of` takes it again, and a
+    // `std::sync::Mutex` is not reentrant. Holding it across that call does not
+    // return an error or block for a while: it deadlocks this thread for good,
+    // which is why the interface used to sit on its boot screen forever.
+    let (folders, totals, storage, tags, collections, projects, activity, recent) = {
+        let conn = state.db()?;
+        let (recent, _) = db::list_files(
+            &conn,
+            &FileQuery {
+                limit: Some(60),
+                ..FileQuery::default()
+            },
+        )?;
+        (
+            db::list_folders(&conn)?,
+            db::totals(&conn)?,
+            db::storage_stats(&conn, volume_capacity(state.inner()))?,
+            db::list_tags(&conn)?,
+            db::list_collections(&conn)?,
+            db::list_projects(&conn)?,
+            db::list_activity(&conn, 30)?,
+            recent,
+        )
+    };
 
-    Ok(ArchiveSnapshot {
-        folders: db::list_folders(&conn)?,
-        totals: db::totals(&conn)?,
-        storage: db::storage_stats(&conn, volume_capacity(state.inner()))?,
-        tags: db::list_tags(&conn)?,
-        collections: db::list_collections(&conn)?,
-        projects: db::list_projects(&conn)?,
-        activity: db::list_activity(&conn, 30)?,
+    let snapshot = ArchiveSnapshot {
+        folders,
+        totals,
+        storage,
+        tags,
+        collections,
+        projects,
+        activity,
         recent,
         index: status_of(state.inner()),
-    })
+    };
+    Ok(snapshot)
 }
 
 #[tauri::command]
-pub fn list_files(state: SharedState<'_>, query: FileQuery) -> AppResult<FilePage> {
+pub async fn list_files(state: SharedState<'_>, query: FileQuery) -> AppResult<FilePage> {
     let conn = state.db()?;
     let limit = query.limit.unwrap_or(120).clamp(1, 1000);
     let offset = query.offset.unwrap_or(0).max(0);
@@ -99,13 +132,13 @@ pub fn list_files(state: SharedState<'_>, query: FileQuery) -> AppResult<FilePag
 }
 
 #[tauri::command]
-pub fn files_by_ids(state: SharedState<'_>, ids: Vec<String>) -> AppResult<Vec<FileRecord>> {
+pub async fn files_by_ids(state: SharedState<'_>, ids: Vec<String>) -> AppResult<Vec<FileRecord>> {
     let conn = state.db()?;
     db::files_by_ids(&conn, &ids)
 }
 
 #[tauri::command]
-pub fn file_detail(state: SharedState<'_>, file_id: String) -> AppResult<Option<FileRecord>> {
+pub async fn file_detail(state: SharedState<'_>, file_id: String) -> AppResult<Option<FileRecord>> {
     let conn = state.db()?;
     db::file_by_id(&conn, &file_id)
 }
@@ -116,7 +149,7 @@ pub fn file_detail(state: SharedState<'_>, file_id: String) -> AppResult<Option<
 /// renders its own neutral wash rather than a bundled image standing in for the
 /// user's archive.
 #[tauri::command]
-pub fn hero_image(state: SharedState<'_>) -> AppResult<Option<FileRecord>> {
+pub async fn hero_image(state: SharedState<'_>) -> AppResult<Option<FileRecord>> {
     let conn = state.db()?;
     db::hero_candidate(&conn)
 }
@@ -150,42 +183,42 @@ pub fn os_identity() -> OsIdentity {
 }
 
 #[tauri::command]
-pub fn storage_stats(state: SharedState<'_>) -> AppResult<StorageStats> {
+pub async fn storage_stats(state: SharedState<'_>) -> AppResult<StorageStats> {
     let conn = state.db()?;
     db::storage_stats(&conn, volume_capacity(state.inner()))
 }
 
 #[tauri::command]
-pub fn archive_totals(state: SharedState<'_>) -> AppResult<ArchiveTotals> {
+pub async fn archive_totals(state: SharedState<'_>) -> AppResult<ArchiveTotals> {
     let conn = state.db()?;
     db::totals(&conn)
 }
 
 #[tauri::command]
-pub fn index_status(state: SharedState<'_>) -> AppResult<IndexStatus> {
+pub async fn index_status(state: SharedState<'_>) -> AppResult<IndexStatus> {
     Ok(status_of(state.inner()))
 }
 
 #[tauri::command]
-pub fn list_tags(state: SharedState<'_>) -> AppResult<Vec<Tag>> {
+pub async fn list_tags(state: SharedState<'_>) -> AppResult<Vec<Tag>> {
     let conn = state.db()?;
     db::list_tags(&conn)
 }
 
 #[tauri::command]
-pub fn list_collections(state: SharedState<'_>) -> AppResult<Vec<ArchiveCollection>> {
+pub async fn list_collections(state: SharedState<'_>) -> AppResult<Vec<ArchiveCollection>> {
     let conn = state.db()?;
     db::list_collections(&conn)
 }
 
 #[tauri::command]
-pub fn list_projects(state: SharedState<'_>) -> AppResult<Vec<Project>> {
+pub async fn list_projects(state: SharedState<'_>) -> AppResult<Vec<Project>> {
     let conn = state.db()?;
     db::list_projects(&conn)
 }
 
 #[tauri::command]
-pub fn list_activity(state: SharedState<'_>, limit: Option<i64>) -> AppResult<Vec<ActivityEntry>> {
+pub async fn list_activity(state: SharedState<'_>, limit: Option<i64>) -> AppResult<Vec<ActivityEntry>> {
     let conn = state.db()?;
     db::list_activity(&conn, limit.unwrap_or(30))
 }
@@ -382,7 +415,7 @@ pub fn save_settings(state: SharedState<'_>, patch: serde_json::Value) -> AppRes
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn service_health(state: SharedState<'_>) -> AppResult<serde_json::Value> {
+pub async fn service_health(state: SharedState<'_>) -> AppResult<serde_json::Value> {
     let port = state.service_port.load(Ordering::Relaxed);
     let enabled = state.service_enabled.load(Ordering::Relaxed);
     if !enabled {
@@ -412,7 +445,7 @@ pub fn service_health(state: SharedState<'_>) -> AppResult<serde_json::Value> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn search_archive(state: SharedState<'_>, query: SearchQuery) -> AppResult<SearchResponse> {
+pub async fn search_archive(state: SharedState<'_>, query: SearchQuery) -> AppResult<SearchResponse> {
     let conn = state.db()?;
     let retrieval = Retrieval {
         conn: &conn,
@@ -422,7 +455,7 @@ pub fn search_archive(state: SharedState<'_>, query: SearchQuery) -> AppResult<S
 }
 
 #[tauri::command]
-pub fn similar_files(state: SharedState<'_>, file_id: String, limit: Option<i64>) -> AppResult<Vec<SearchHit>> {
+pub async fn similar_files(state: SharedState<'_>, file_id: String, limit: Option<i64>) -> AppResult<Vec<SearchHit>> {
     let conn = state.db()?;
     let retrieval = Retrieval {
         conn: &conn,
@@ -432,7 +465,7 @@ pub fn similar_files(state: SharedState<'_>, file_id: String, limit: Option<i64>
 }
 
 #[tauri::command]
-pub fn related_files(state: SharedState<'_>, file_id: String, limit: Option<i64>) -> AppResult<Vec<SearchHit>> {
+pub async fn related_files(state: SharedState<'_>, file_id: String, limit: Option<i64>) -> AppResult<Vec<SearchHit>> {
     let conn = state.db()?;
     let retrieval = Retrieval {
         conn: &conn,

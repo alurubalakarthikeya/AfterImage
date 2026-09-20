@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { dismissSplash, report } from '@/boot';
 import { useAppearance } from '@/hooks/useAppearance';
 import { useDropImport } from '@/hooks/useDropImport';
 import { useHostBridge } from '@/hooks/useHostBridge';
@@ -6,7 +7,10 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useLocalIdentity } from '@/hooks/useLocalIdentity';
 import { getHost, isTauri } from '@/services/host';
 import { useArchiveStore } from '@/stores/archive';
+import { useSettingsStore } from '@/stores/settings';
+import { Onboarding } from '@/components/onboarding/Onboarding';
 import { AppShell } from '@/components/layout/AppShell';
+import { TitleBar } from '@/components/layout/TitleBar';
 import { NoticeHost } from '@/components/layout/NoticeHost';
 import { ShortcutsSheet } from '@/components/layout/ShortcutsSheet';
 import { FileContextMenu } from '@/components/files/FileContextMenu';
@@ -17,8 +21,33 @@ import { LogoMark } from '@/components/common/Logo';
 import { Button } from '@/components/common/Button';
 import { Icon } from '@/components/common/Icon';
 
-/** Shown for the handful of milliseconds before the first index read lands. */
-function BootScreen() {
+/**
+ * A window before the archive exists.
+ *
+ * The title bar is part of it even here: the app is frameless, so a screen that
+ * omitted the chrome would be a rectangle the user could not move or close.
+ */
+function StartupFrame({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-canvas">
+      <TitleBar
+        left={
+          <div
+            data-tauri-drag-region
+            className="flex shrink-0 items-center gap-2.5 pl-6 pr-4"
+          >
+            <LogoMark size={21} />
+            <span className="text-body font-semibold tracking-[-0.015em] text-ink">AfterImage</span>
+          </div>
+        }
+      />
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+/** Shown between the splash and the first index read. */
+function BootScreen({ slow }: { slow: boolean }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4">
       <div className="af-pulse-slow">
@@ -26,7 +55,9 @@ function BootScreen() {
       </div>
       <div className="text-center">
         <p className="text-body font-medium text-ink">AfterImage</p>
-        <p className="mt-0.5 text-meta text-ink-3">Opening your local archive…</p>
+        <p className="mt-0.5 text-meta text-ink-3">
+          {slow ? 'Still opening the index — this is taking longer than usual.' : 'Opening your local archive…'}
+        </p>
       </div>
     </div>
   );
@@ -90,13 +121,65 @@ export default function App() {
   const status = useArchiveStore((state) => state.status);
   const error = useArchiveStore((state) => state.error);
   const load = useArchiveStore((state) => state.load);
+  const onboarded = useSettingsStore((state) => state.onboarded);
+  const [slow, setSlow] = useState(false);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (status === 'error' && error) return <LoadFailure message={error} />;
-  if (status === 'idle' || status === 'loading') return <BootScreen />;
+  // React has painted, so the markup splash has nothing left to cover. It is
+  // dismissed here rather than on the archive becoming ready: keeping it up for
+  // the length of a scan would hide the one screen that reports a stalled one.
+  useEffect(() => {
+    dismissSplash();
+  }, []);
+
+  // One line in the application log for the moment the archive is usable. It is
+  // the difference between "the window opened" and "the window works", which is
+  // exactly the distinction that was missing while the boot screen was stuck.
+  useEffect(() => {
+    if (status === 'ready') report('boot: archive ready');
+  }, [status]);
+
+  // A load that never resolves must not look like a load that is working.
+  useEffect(() => {
+    if (status !== 'loading' && status !== 'idle') {
+      setSlow(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlow(true), 12_000);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+
+  const loading = status === 'idle' || status === 'loading';
+
+  const fallback =
+    status === 'error' && error ? (
+      <LoadFailure message={error} />
+    ) : loading ? (
+      <BootScreen slow={slow} />
+    ) : null;
+
+  if (fallback) {
+    return (
+      <>
+        <StartupFrame>{fallback}</StartupFrame>
+        <NoticeHost />
+      </>
+    );
+  }
+
+  // The wizard comes before the shell, once. It brings its own title bar so the
+  // window keeps its controls while the user is answering it.
+  if (!onboarded) {
+    return (
+      <>
+        <Onboarding />
+        <NoticeHost />
+      </>
+    );
+  }
 
   return (
     <>

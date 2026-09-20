@@ -118,6 +118,18 @@ export function createNativeHost(): ArchiveHost {
     return typeof selected === 'string' ? selected : null;
   };
 
+  const pickFoldersDialog = async (): Promise<string[]> => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const selected = await open({
+      directory: true,
+      multiple: true,
+      title: 'Choose folders to index',
+    });
+    if (selected === null) return [];
+    const paths = Array.isArray(selected) ? selected : [selected];
+    return paths.filter((value): value is string => typeof value === 'string');
+  };
+
   return {
     name: 'tauri',
     capabilities: CAPABILITIES,
@@ -137,6 +149,7 @@ export function createNativeHost(): ArchiveHost {
     },
 
     addFolderPath: (path) => invoke<ArchiveFolder | null>('add_folder', { path }),
+    chooseFolders: () => pickFoldersDialog(),
     removeFolder: (folderId) => invoke<void>('remove_folder', { folderId }),
     rescanFolder: (folderId) => invoke<void>('rescan_folder', { folderId }),
 

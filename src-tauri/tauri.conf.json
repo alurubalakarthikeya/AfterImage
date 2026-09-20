@@ -20,14 +20,15 @@
         "minHeight": 720,
         "resizable": true,
         "center": true,
-        "decorations": true,
+        "decorations": false,
+        "shadow": true,
         "transparent": false,
         "dragDropEnabled": true,
         "acceptFirstMouse": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:8765 http://localhost:1420 ws://localhost:1420",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://asset.localhost http://127.0.0.1:8765 http://localhost:1420 ws://localhost:1420",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/thumbnails/**"]

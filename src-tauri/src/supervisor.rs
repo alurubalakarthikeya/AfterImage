@@ -50,11 +50,34 @@ impl Supervisor {
 
     /// Stop a service this process started. Something the user launched is left
     /// alone, because this application did not start it.
+    ///
+    /// `child.wait()` runs on a background thread so the main thread (which
+    /// drives the webview event loop) is never blocked.  On Windows a
+    /// `wait()` after `kill()` can hang indefinitely if the child does not
+    /// exit — spawning it off keeps the UI responsive during shutdown.
     pub fn stop(&self) {
         let taken = self.child.lock().ok().and_then(|mut slot| slot.take());
         if let Some(mut child) = taken {
             let _ = child.kill();
-            let _ = child.wait();
+            std::thread::spawn(move || {
+                // Give the child up to 3 seconds to exit gracefully after
+                // the kill signal.  If it still hasn't exited we move on:
+                // the OS will reclaim resources when this process ends.
+                let deadline = std::time::Instant::now()
+                    + std::time::Duration::from_secs(3);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) => break,
+                        Ok(None) => {
+                            if std::time::Instant::now() >= deadline {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(80));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
         }
     }
 }

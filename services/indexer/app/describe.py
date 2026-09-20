@@ -1,18 +1,20 @@
-"""Image understanding.
+"""Image understanding: smart tags and a description, in words.
 
-Two things happen here, and both are optional:
+Three things happen here, all optional:
 
-* **Labels** come from CLIP zero-shot classification against a small, fixed set
-  of prompts. Only labels above ``label_floor`` survive, so a screenshot is
-  labelled ``screenshot`` and ``code`` rather than everything at once.
-* **A title** comes from a captioning model, trimmed to a phrase.
+* **Labels** — the smart tags. CLIP is asked which of a fixed set of phrases an
+  image resembles, and only the answers above a confidence floor survive. Asking
+  "is this a photograph of a dog" and getting 0.7 back is a real answer from a
+  real model, which is why it can be stored as a tag and searched later.
+* **A description** — one sentence, written from the winning phrase. This is the
+  text a natural-language query is matched against, so "that picture of the
+  error message" finds a screenshot that was never named in those words.
+* **A title** — only ever from a real captioning model. CLIP can say *code
+  editor*; it cannot write *the failing build on Tuesday*. So with CLIP alone
+  the file keeps its own name, and the description carries the meaning instead.
 
-When nothing is installed this module returns nothing at all. That is the whole
-point: the desktop application then describes a file by its filename, its
-extracted text and its metadata, and never shows a sentence no model produced.
-
-The caption is metadata. It lives in the index beside the file and is never used
-to rename anything on disk.
+The prompt vocabulary is deliberately broad and written the way people speak.
+Every phrase added is another query that will land.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import vision
 from .capabilities import detect
 from .config import get_settings
 from . import embed
@@ -31,39 +34,90 @@ _CAPTION_CACHE: tuple[Any, Any] | None = None
 _CAPTION_FAILED = False
 
 
-# Prompts are phrased as descriptions of the whole image, which is what CLIP
-# was trained against. The keys are what gets stored.
+# Prompts are phrased as descriptions of the whole image, which is what CLIP was
+# trained against. The keys are what gets stored as tags.
 LABEL_PROMPTS: dict[str, str] = {
+    # screens and software
     "screenshot": "a screenshot of a computer screen",
     "code": "a screenshot of source code in an editor",
-    "terminal": "a screenshot of a terminal window",
+    "terminal": "a screenshot of a terminal or command prompt",
     "error": "a screenshot showing an error message or stack trace",
     "browser": "a screenshot of a web browser",
+    "chat": "a screenshot of a chat or messaging conversation",
+    "dashboard": "a screenshot of a dashboard or analytics interface",
     "ui": "a screenshot of an application interface",
-    "diagram": "a diagram or chart",
+    "game": "a screenshot of a video game",
+    # documents and diagrams
     "document": "a scan or photograph of a document with text",
+    "receipt": "a photograph of a receipt or invoice",
     "handwriting": "a photograph of handwritten notes",
     "presentation": "a slide from a presentation",
-    "chart": "a graph or data visualisation",
+    "chart": "a graph, chart or data visualisation",
+    "diagram": "a technical diagram or schematic",
+    "whiteboard": "a photograph of a whiteboard with writing on it",
+    "map": "a map",
+    "poster": "a poster or flyer",
+    # people
     "person": "a photograph of a person",
-    "people": "a photograph of several people",
+    "selfie": "a close-up selfie of a person",
+    "portrait": "a portrait photograph of one person",
+    "group": "a photograph of several people together",
+    "baby": "a photograph of a baby",
+    "crowd": "a photograph of a crowd of people",
+    # places and things
+    "outdoors": "an outdoor photograph",
+    "indoors": "an indoor photograph",
     "nature": "a photograph of nature, plants or landscape",
-    "building": "a photograph of a building or architecture",
-    "food": "a photograph of food",
+    "beach": "a photograph of a beach or the sea",
+    "mountain": "a photograph of mountains",
+    "city": "a photograph of a city or street scene",
+    "night": "a photograph taken at night",
+    "sky": "a photograph of the sky or clouds",
+    "food": "a photograph of food or a meal",
+    "drink": "a photograph of a drink",
     "animal": "a photograph of an animal",
-    "vehicle": "a photograph of a vehicle",
+    "dog": "a photograph of a dog",
+    "cat": "a photograph of a cat",
+    "bird": "a photograph of a bird",
+    "plant": "a photograph of a plant or flowers",
+    "vehicle": "a photograph of a car or other vehicle",
+    "building": "a photograph of a building or architecture",
+    "furniture": "a photograph of furniture or a room",
+    "clothing": "a photograph of clothing or an outfit",
+    "product": "a product photograph on a plain background",
     "art": "a drawing, painting or illustration",
     "logo": "a logo or icon",
-    "map": "a map",
-    "product": "a product photograph",
+    "text": "an image that is mostly text",
+    "blurry": "a blurry or out-of-focus photograph",
+    "old": "an old or historical photograph",
+    "sports": "a photograph of a sport or game",
 }
 
 # Prompts that describe the *kind* of image rather than its subject. Kept
-# separate so the caller can use them for screenshots and photos differently.
+# separate so a screenshot is not also tagged with everything a photo can be.
 DOCUMENT_PROMPTS: dict[str, str] = {
     key: LABEL_PROMPTS[key]
-    for key in ("screenshot", "code", "terminal", "error", "browser", "ui", "document", "diagram")
+    for key in (
+        "screenshot",
+        "code",
+        "terminal",
+        "error",
+        "browser",
+        "chat",
+        "dashboard",
+        "ui",
+        "document",
+        "chart",
+        "diagram",
+        "whiteboard",
+        "presentation",
+        "text",
+    )
 }
+
+# The phrase used for each label when writing the description sentence. Reusing
+# the prompt keeps the sentence and the tag saying the same thing.
+_PHRASES: dict[str, str] = {"screenshot": "A screenshot of a computer screen"}
 
 
 @dataclass
@@ -147,20 +201,49 @@ def caption(path: str) -> str | None:
 
 
 def labels_for(path: str, kind: str) -> list[str]:
-    """Meaningful labels only, sorted by confidence."""
+    """Meaningful labels only, strongest first."""
     settings = get_settings()
     if not settings.vision_enabled:
         return []
 
     prompts = DOCUMENT_PROMPTS if kind in {"screenshot", "document"} else LABEL_PROMPTS
-    scores = embed.classify_image(path, prompts)
+    # ONNX first: it is the install this app ships with. The PyTorch path stays
+    # for anyone who already has it.
+    scores = vision.classify(path, prompts) if vision.available() else None
+    if scores is None:
+        scores = embed.classify_image(path, prompts)
     if not scores:
         return []
 
     ranked = sorted(scores.items(), key=lambda item: -item[1])
     kept = [label for label, score in ranked if score >= settings.label_floor]
-    # Four labels is plenty; past that the panel becomes noise.
+    # A confident top label plus three more is plenty; past that the panel
+    # becomes noise and the search index fills with noise to match.
     return kept[:4]
+
+
+def _sentence(labels: list[str], kind: str) -> str | None:
+    """One line of prose from the labels the model actually returned.
+
+    Nothing here decides anything new: each clause restates a tag that cleared
+    the confidence floor. That is the whole reason it is allowed to exist — a
+    sentence nobody's model produced would be indistinguishable from one that
+    was, which is the failure mode this application refuses to have.
+    """
+    if not labels:
+        return None
+
+    head = labels[0]
+    phrase = LABEL_PROMPTS.get(head)
+    if phrase is None:
+        return None
+    sentence = phrase[0].upper() + phrase[1:]
+    if len(labels) > 1 and labels[1] in LABEL_PROMPTS:
+        phrase_two = LABEL_PROMPTS[labels[1]]
+        # Strip the leading article so the two clauses do not read "a … a …".
+        phrase_two = re.sub(r"^(a|an|the)\s+", "", phrase_two)
+        sentence = f"{sentence}, {phrase_two}"
+    return f"{sentence}."
 
 
 def describe(path: str, kind: str) -> Description:
@@ -172,8 +255,9 @@ def describe(path: str, kind: str) -> Description:
     available = detect()
     labels = labels_for(path, kind)
     title = caption(path) if kind in {"photo", "screenshot", "design"} else None
+    description = _sentence(labels, kind)
 
-    if title is None and not labels:
+    if title is None and not labels and description is None:
         reason = (
             "no vision model is installed"
             if not (available.image_embeddings or available.image_captions)
@@ -181,9 +265,10 @@ def describe(path: str, kind: str) -> Description:
         )
         return Description(reason=reason)
 
-    engine = "clip+blip" if title else "clip"
+    engine = "blip+clip" if title else ("clip-onnx" if vision.available() else "clip")
     return Description(
         title=title,
+        description=description,
         labels=labels,
         engine=engine,
         available=True,

@@ -5,22 +5,227 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>AfterImage — Your Digital Archive</title>
+
+    <!--
+      The theme has to be right before the first paint, and the bundle that owns
+      the preference has not loaded yet at that point. Reading the persisted
+      value here is the difference between opening in the theme you chose and
+      opening in the default and then snapping to it.
+    -->
+    <script>
+      (function () {
+        var resolved = 'light';
+        try {
+          var raw = localStorage.getItem('afterimage.settings.v1');
+          var stored = raw ? JSON.parse(raw).state : null;
+          var appearance = (stored && stored.appearance) || 'light';
+          var prefersDark =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          resolved = appearance === 'system' ? (prefersDark ? 'dark' : 'light') : appearance;
+          if (resolved !== 'light' && resolved !== 'dark') resolved = 'light';
+        } catch (error) {
+          /* a preference that cannot be read is not a reason to fail to start */
+        }
+        document.documentElement.dataset.theme = resolved;
+      })();
+    </script>
+
     <style>
-      /* Painted before React mounts so the window never flashes white. */
+      /*
+       * Everything the window needs before React exists: the canvas colour and
+       * the splash. Deliberately self-contained — index.css arrives with the
+       * bundle, which is exactly the thing being waited on.
+       */
+      :root {
+        --af-canvas: #f4f7f6;
+        --af-ink: #142124;
+        --af-ink-2: #697879;
+        --af-ink-3: #93a1a0;
+        --af-accent: #2f7773;
+        --af-accent-soft: #dcefed;
+        --af-line: rgba(20, 33, 36, 0.08);
+        --af-glow: rgba(47, 119, 115, 0.13);
+        --af-track: rgba(20, 33, 36, 0.08);
+      }
+
+      html[data-theme='dark'] {
+        --af-canvas: #0f1514;
+        --af-ink: #e9f0ef;
+        --af-ink-2: #98a6a4;
+        --af-ink-3: #6c7a78;
+        --af-accent: #4fa39b;
+        --af-accent-soft: #1c3331;
+        --af-line: rgba(233, 240, 239, 0.09);
+        --af-glow: rgba(79, 163, 155, 0.14);
+        --af-track: rgba(233, 240, 239, 0.1);
+      }
+
       html,
       body {
         margin: 0;
-        background: #f4f7f6;
+        height: 100%;
+        background: var(--af-canvas);
+        color: var(--af-ink);
+      }
+
+      html[data-theme='light'] {
         color-scheme: light;
       }
-      html[data-theme='dark'],
-      html[data-theme='dark'] body {
-        background: #101615;
+
+      html[data-theme='dark'] {
         color-scheme: dark;
+      }
+
+      #af-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: var(--af-canvas);
+        opacity: 1;
+        transition: opacity 220ms ease;
+      }
+
+      #af-splash.af-splash-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      /* One soft accent halo. No gradient on the mark itself — the geometry is
+         the identity, and a glowing logo is decoration pretending to be brand. */
+      #af-splash::before {
+        content: '';
+        position: absolute;
+        width: 640px;
+        height: 640px;
+        border-radius: 50%;
+        background: radial-gradient(circle, var(--af-glow), transparent 68%);
+        pointer-events: none;
+      }
+
+      #af-splash .af-splash-stack {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+
+      #af-splash .af-splash-mark {
+        animation: af-splash-breathe 2.6s ease-in-out infinite;
+      }
+
+      #af-splash .af-splash-name {
+        font: 600 15px/1.2 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: -0.02em;
+        color: var(--af-ink);
+      }
+
+      #af-splash .af-splash-tagline {
+        margin-top: 3px;
+        font: 400 11.5px/1.3 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.01em;
+        color: var(--af-ink-3);
+      }
+
+      #af-splash .af-splash-track {
+        position: relative;
+        width: 132px;
+        height: 3px;
+        border-radius: 999px;
+        background: var(--af-track);
+        overflow: hidden;
+      }
+
+      #af-splash .af-splash-track::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: 42%;
+        border-radius: 999px;
+        background: var(--af-accent);
+        animation: af-splash-slide 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      }
+
+      @keyframes af-splash-slide {
+        0% {
+          transform: translateX(-110%);
+        }
+        100% {
+          transform: translateX(340%);
+        }
+      }
+
+      @keyframes af-splash-breathe {
+        0%,
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.72;
+          transform: scale(0.975);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #af-splash .af-splash-mark,
+        #af-splash .af-splash-track::after {
+          animation: none;
+        }
       }
     </style>
   </head>
   <body>
+    <!-- Removed by the renderer on its first commit; the fallback if the bundle
+         never runs is the boot guard, which reports why. -->
+    <div id="af-splash" role="status" aria-live="polite" aria-label="AfterImage is starting">
+      <div class="af-splash-stack">
+        <svg
+          class="af-splash-mark"
+          width="46"
+          height="46"
+          viewBox="0 0 32 32"
+          fill="none"
+          aria-hidden="true"
+        >
+          <rect x="1.25" y="1.25" width="29.5" height="29.5" rx="9" fill="var(--af-accent-soft)" />
+          <rect
+            x="7.5"
+            y="7.5"
+            width="12"
+            height="12"
+            rx="3.5"
+            stroke="var(--af-accent)"
+            stroke-width="1.6"
+            opacity="0.45"
+          />
+          <rect
+            x="11"
+            y="11"
+            width="12"
+            height="12"
+            rx="3.5"
+            stroke="var(--af-accent)"
+            stroke-width="1.6"
+            opacity="0.75"
+          />
+          <rect x="14.5" y="14.5" width="11" height="11" rx="3.5" fill="var(--af-accent)" />
+        </svg>
+        <div style="text-align: center">
+          <div class="af-splash-name">AfterImage</div>
+          <div class="af-splash-tagline">Opening your local archive</div>
+        </div>
+        <div class="af-splash-track" aria-hidden="true"></div>
+      </div>
+    </div>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

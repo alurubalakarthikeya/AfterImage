@@ -16,6 +16,7 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { FirstRun } from './FirstRun';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { StatusBar } from './StatusBar';
 import { Inspector } from './Inspector';
 import { DropOverlay } from './DropOverlay';
 
@@ -53,10 +54,11 @@ function RouteView({ route }: { route: RouteId }) {
 /**
  * The window.
  *
- * A CSS grid, not fixed positioning: sidebar | workspace | inspector, with the
- * top bar spanning the grid so the search field lines up with the workspace and
- * the controls line up with the inspector. Below 1280px the inspector steps
- * out of the way rather than crushing the workspace.
+ * Three bands stacked to the edges of the frame: the title bar, the working
+ * area, the status bar. The middle band is a CSS grid — sidebar | workspace |
+ * inspector — so the search field in the title bar lines up with the first
+ * column of cards and the toolbar lines up with the inspector. Below 1280px the
+ * inspector steps out of the way rather than crushing the workspace.
  */
 export function AppShell() {
   const route = useUIStore((state) => state.route);
@@ -80,18 +82,14 @@ export function AppShell() {
   const columns = showInspector
     ? `${sidebarWidth}px minmax(0, 1fr) ${INSPECTOR_WIDTH}px`
     : `${sidebarWidth}px minmax(0, 1fr)`;
-  const topBarColumns = showInspector
-    ? `${sidebarWidth}px minmax(0, 1fr) ${INSPECTOR_WIDTH}px`
-    : `${sidebarWidth}px minmax(0, 1fr) auto`;
 
   return (
-    // The window frame is 16px: the sidebar and the inspector sit against it, as
-    // panels do in a desktop app. The workspace adds the other 8px, so page
-    // content lands on the 24px the design calls for.
-    <div className="flex h-full min-h-0 flex-col px-4 pb-4">
-      <TopBar columns={topBarColumns} />
+    <div className="flex h-full min-h-0 flex-col bg-canvas">
+      <TopBar sidebarWidth={sidebarWidth} />
 
-      <div className="grid min-h-0 flex-1 gap-4" style={{ gridTemplateColumns: columns }}>
+      {/* The window's own inset: 12px against every edge, including under the
+          title bar, so the frame reads as a frame and the content as content. */}
+      <div className="grid min-h-0 flex-1 gap-3 px-3 pb-3 pt-3" style={{ gridTemplateColumns: columns }}>
         <Sidebar />
         <main
           className="min-h-0 overflow-y-auto overflow-x-hidden"
@@ -101,7 +99,7 @@ export function AppShell() {
           {/* Keyed by route: navigating away is itself a retry, and boundaries
               are per region so one failed panel never blanks the window. */}
           <ErrorBoundary region="workspace" key={route}>
-            <div className="af-route-enter h-full p-2">
+            <div className="af-route-enter h-full p-1">
               {needsSetup ? <FirstRun /> : <RouteView route={route} />}
             </div>
           </ErrorBoundary>
@@ -113,6 +111,7 @@ export function AppShell() {
         )}
       </div>
 
+      <StatusBar />
       <DropOverlay />
     </div>
   );

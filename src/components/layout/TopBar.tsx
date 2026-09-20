@@ -1,18 +1,17 @@
-import { useEffect, useState } from 'react';
-import { isTauri } from '@/services/host';
+import { useState } from 'react';
 import { useArchiveStore } from '@/stores/archive';
 import { useUIStore } from '@/stores/ui';
+import { useSettingsStore } from '@/stores/settings';
 import { cn, formatRelativeTime } from '@/utils/format';
 import { Icon } from '@/components/common/Icon';
 import { IconButton, IconButtonGroup } from '@/components/common/IconButton';
 import { Tooltip } from '@/components/common/Tooltip';
 import { StatusDot } from '@/components/common/Badge';
 import { Avatar } from '@/components/common/Avatar';
-import { useSettingsStore } from '@/stores/settings';
-import { SearchBar } from '@/components/search/SearchBar';
-import { AppearanceMenu } from './AppearanceMenu';
-import { IndexStatus } from './IndexStatus';
 import { LogoMark } from '@/components/common/Logo';
+import { SearchBar } from '@/components/search/SearchBar';
+import { ThemeControl } from './ThemeControl';
+import { TitleBar } from './TitleBar';
 
 function NotificationBell() {
   const [open, setOpen] = useState(false);
@@ -83,141 +82,105 @@ function NotificationBell() {
   );
 }
 
-/** Native window buttons. Rendered only inside the Tauri webview. */
-function WindowControls() {
-  const [native, setNative] = useState(false);
-  useEffect(() => setNative(isTauri()), []);
-
-  if (!native) return null;
-
-  const control = async (action: 'minimize' | 'toggleMaximize' | 'close') => {
-    try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow()[action]();
-    } catch {
-      /* the window API is unavailable outside Tauri */
-    }
-  };
-
-  return (
-    <div className="no-drag ml-1 flex items-center gap-0.5">
-      <IconButton size="sm" label="Minimize" onClick={() => void control('minimize')}>
-        <Icon name="Minus" size={15} strokeWidth={2} />
-      </IconButton>
-      <IconButton size="sm" label="Maximize" onClick={() => void control('toggleMaximize')}>
-        <Icon name="Square" size={13} strokeWidth={2} />
-      </IconButton>
-      <IconButton size="sm" label="Close" onClick={() => void control('close')}>
-        <Icon name="X" size={15} strokeWidth={2} />
-      </IconButton>
-    </div>
-  );
-}
-
-export function TopBar({ columns }: { columns: string }) {
+/**
+ * The title bar.
+ *
+ * Left third is the sidebar's width so the brand sits exactly over the column
+ * it belongs to and the search field starts on the same line as the workspace.
+ */
+export function TopBar({ sidebarWidth }: { sidebarWidth: number }) {
   const viewMode = useUIStore((state) => state.viewMode);
   const setViewMode = useUIStore((state) => state.setViewMode);
   const navigate = useUIStore((state) => state.navigate);
   const sidebarCollapsed = useUIStore((state) => state.sidebarCollapsed);
   const inspectorOpen = useUIStore((state) => state.inspectorOpen);
   const toggleInspector = useUIStore((state) => state.toggleInspector);
-  const appearanceOpen = useUIStore((state) => state.appearanceOpen);
-  const setAppearanceOpen = useUIStore((state) => state.setAppearanceOpen);
   const addFolder = useArchiveStore((state) => state.addFolder);
   const userName = useSettingsStore((state) => state.userName);
+  const accountLabel = useSettingsStore((state) => state.accountLabel);
 
   return (
-    <header
-      className="grid h-16 shrink-0 items-center gap-4"
-      style={{ gridTemplateColumns: columns }}
-      data-tauri-drag-region
-    >
-      <div className="drag-region flex min-w-0 items-center gap-2.5 pl-1">
-        {sidebarCollapsed && <LogoMark size={22} />}
-        <IndexStatus />
-      </div>
-
-      {/* Indented to the workspace's own inset, so the search field starts on the
-          same vertical line as the first card of every page. */}
-      <div className="flex min-w-0 items-center gap-3 pl-2">
-        <SearchBar />
-      </div>
-
-      <div className="no-drag flex items-center justify-end gap-1">
-        {/* AfterImage has no import step: the archive grows by watching folders. */}
-        <Tooltip label="Add a folder to index" shortcut="Ctrl O" side="bottom">
-          <IconButton label="Add folder" onClick={() => void addFolder()}>
-            <Icon name="FolderPlus" size={17} strokeWidth={1.9} />
-          </IconButton>
-        </Tooltip>
-
-        <IconButtonGroup>
-          <Tooltip label="Grid view" side="bottom">
-            <IconButton
-              size="sm"
-              label="Grid view"
-              active={viewMode === 'grid'}
-              onClick={() => setViewMode('grid')}
-            >
-              <Icon name="LayoutGrid" size={15} strokeWidth={2} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="List view" side="bottom">
-            <IconButton
-              size="sm"
-              label="List view"
-              active={viewMode === 'list'}
-              onClick={() => setViewMode('list')}
-            >
-              <Icon name="List" size={15} strokeWidth={2} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip label="Timeline view" side="bottom">
-            <IconButton
-              size="sm"
-              label="Timeline view"
-              active={viewMode === 'timeline'}
-              onClick={() => setViewMode('timeline')}
-            >
-              <Icon name="Rows3" size={15} strokeWidth={2} />
-            </IconButton>
-          </Tooltip>
-        </IconButtonGroup>
-
-        <NotificationBell />
-
-        <div className="relative">
-          <Tooltip label="Appearance" side="bottom">
-            <IconButton
-              label="Appearance"
-              active={appearanceOpen}
-              onClick={() => setAppearanceOpen(!appearanceOpen)}
-            >
-              <Icon name="Sun" size={17} strokeWidth={1.9} />
-            </IconButton>
-          </Tooltip>
-          <AppearanceMenu />
+    <TitleBar
+      left={
+        <div
+          data-tauri-drag-region
+          className="flex shrink-0 items-center gap-2.5 pl-3.5"
+          style={{ width: sidebarWidth }}
+        >
+          <LogoMark size={21} />
+          {!sidebarCollapsed && (
+            <span className="truncate text-body font-semibold tracking-[-0.015em] text-ink">
+              AfterImage
+            </span>
+          )}
         </div>
+      }
+      center={<SearchBar />}
+      right={
+        <>
+          {/* AfterImage has no import step: the archive grows by watching folders. */}
+          <Tooltip label="Add a folder to index" shortcut="Ctrl O" side="bottom">
+            <IconButton label="Add folder" onClick={() => void addFolder()}>
+              <Icon name="FolderPlus" size={17} strokeWidth={1.9} />
+            </IconButton>
+          </Tooltip>
 
-        <Tooltip label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} side="bottom">
-          <IconButton label="Toggle inspector" active={inspectorOpen} onClick={toggleInspector}>
-            <Icon name="PanelRight" size={17} strokeWidth={1.9} />
-          </IconButton>
-        </Tooltip>
+          <IconButtonGroup>
+            <Tooltip label="Grid view" side="bottom">
+              <IconButton
+                size="sm"
+                label="Grid view"
+                active={viewMode === 'grid'}
+                onClick={() => setViewMode('grid')}
+              >
+                <Icon name="LayoutGrid" size={15} strokeWidth={2} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip label="List view" side="bottom">
+              <IconButton
+                size="sm"
+                label="List view"
+                active={viewMode === 'list'}
+                onClick={() => setViewMode('list')}
+              >
+                <Icon name="List" size={15} strokeWidth={2} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip label="Timeline view" side="bottom">
+              <IconButton
+                size="sm"
+                label="Timeline view"
+                active={viewMode === 'timeline'}
+                onClick={() => setViewMode('timeline')}
+              >
+                <Icon name="Rows3" size={15} strokeWidth={2} />
+              </IconButton>
+            </Tooltip>
+          </IconButtonGroup>
 
-        <Tooltip label={`${userName} — local account`} side="bottom">
-          <button
-            type="button"
-            onClick={() => navigate('settings')}
-            className={cn('ml-1 rounded-full transition-transform duration-150 hover:scale-[1.03]')}
-            aria-label="Account and settings"
-          >
-            <Avatar name={userName} size={30} />
-          </button>
-        </Tooltip>
+          <NotificationBell />
 
-        <WindowControls />
-      </div>
-    </header>
+          <ThemeControl />
+
+          <Tooltip label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} side="bottom">
+            <IconButton label="Toggle inspector" active={inspectorOpen} onClick={toggleInspector}>
+              <Icon name="PanelRight" size={17} strokeWidth={1.9} />
+            </IconButton>
+          </Tooltip>
+
+          <Tooltip label={`${userName || 'You'} · ${accountLabel}`} side="bottom">
+            <button
+              type="button"
+              onClick={() => navigate('settings')}
+              className={cn('ml-0.5 rounded-full transition-transform duration-150 hover:scale-[1.03]')}
+              aria-label="Account and settings"
+            >
+              <Avatar name={userName} size={28} />
+            </button>
+          </Tooltip>
+          <span className="w-1" aria-hidden="true" />
+        </>
+      }
+    />
   );
 }

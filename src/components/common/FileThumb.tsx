@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type { ArchiveFile } from '@/types';
+import { reportImage } from '@/boot';
 import { getHost } from '@/services/host';
 import { cn } from '@/utils/format';
 import { KIND_ICON } from '@/stores/selectors';
@@ -77,8 +78,14 @@ export function FileThumb({
         draggable={false}
         loading={eager ? 'eager' : 'lazy'}
         decoding="async"
-        onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
+        onLoad={() => {
+          setLoaded(true);
+          reportImage(true, file.name);
+        }}
+        onError={() => {
+          setFailed(true);
+          reportImage(false, `${file.name} → ${src.slice(0, 120)}`);
+        }}
         className={cn(
           'h-full w-full object-cover transition-opacity duration-300',
           loaded ? 'opacity-100' : 'opacity-0',

@@ -62,7 +62,17 @@ pub fn run() {
 
             // Persisted preferences decide how this session behaves.
             commands::apply_settings(&state);
-            commands::restore_watchers(app.handle(), &state)?;
+            // Restore watchers on a background thread so the setup closure
+            // returns quickly and the webview can paint immediately.
+            {
+                let app_handle = app.handle().clone();
+                let state_handle = Arc::clone(&state);
+                std::thread::spawn(move || {
+                    if let Err(error) = commands::restore_watchers(&app_handle, &state_handle) {
+                        log::warn!("could not restore file watchers: {error}");
+                    }
+                });
+            }
 
             // The indexing service is started for the user, in the background so
             // a cold start never delays the window. A machine with no indexer
@@ -92,17 +102,27 @@ pub fn run() {
             }
 
             // A first run has nothing to watch: the interface asks for a folder.
-            let folders = {
-                let conn = state.db()?;
-                db::list_folders(&conn)?
-            };
-            if folders.is_empty() {
-                log::info!("no watched folders yet — waiting for the user to choose one");
-            } else {
-                // Pick up anything left queued by a previous session.
-                if let Err(error) = index::recover_pending(app.handle(), &state) {
-                    log::warn!("could not resume the queue from last session: {error}");
-                }
+            // Folder list and pending recovery run on a background thread so
+            // setup returns immediately and the window paints.
+            {
+                let app_handle = app.handle().clone();
+                let state_handle = Arc::clone(&state);
+                std::thread::spawn(move || {
+                    let folders = match state_handle.db() {
+                        Ok(conn) => db::list_folders(&conn).unwrap_or_default(),
+                        Err(error) => {
+                            log::warn!("could not read folders during recovery: {error}");
+                            return;
+                        }
+                    };
+                    if folders.is_empty() {
+                        log::info!("no watched folders yet — waiting for the user to choose one");
+                    } else {
+                        if let Err(error) = index::recover_pending(&app_handle, &state_handle) {
+                            log::warn!("could not resume the queue from last session: {error}");
+                        }
+                    }
+                });
             }
 
             app.manage(Arc::clone(&state));
@@ -118,6 +138,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::frontend_probe,
             commands::archive_snapshot,
             commands::archive_totals,
             commands::list_files,
@@ -160,11 +181,17 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                // Stop watching and let the worker wind down before the process
-                // exits, so no OS handles or half-written rows are left behind.
+                // Tell the pipeline and watcher to stop accepting new work.
                 if let Some(state) = window.app_handle().try_state::<Arc<AppState>>() {
                     state.stopping.store(true, Ordering::SeqCst);
-                    watcher::stop(&state);
+                    // watcher::stop() drops the debouncer, which may block
+                    // while tearing down ReadDirectoryChangesW handles on
+                    // Windows.  Do it off the main thread so the window
+                    // stays responsive while the watcher shuts down.
+                    let state_handle = Arc::clone(&state);
+                    std::thread::spawn(move || {
+                        watcher::stop(&state_handle);
+                    });
                 }
                 // The service is this process's child: stopping it here is what
                 // keeps a Python process from outliving the window.

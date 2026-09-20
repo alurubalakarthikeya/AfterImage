@@ -6,7 +6,6 @@ import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
 import { cn, formatStorage } from '@/utils/format';
 import { Icon } from '@/components/common/Icon';
-import { Logo, LogoMark } from '@/components/common/Logo';
 import { ProgressBar } from '@/components/common/ProgressBar';
 import { Tooltip } from '@/components/common/Tooltip';
 import { Avatar } from '@/components/common/Avatar';
@@ -140,27 +139,23 @@ export function Sidebar() {
       )}
       aria-label="Primary"
     >
-      {/* Brand — the window's only identity mark. */}
-      <div className={cn('flex items-center pb-3', collapsed ? 'justify-center px-0' : 'px-1')}>
-        {collapsed ? (
-          <Tooltip label="AfterImage" side="right">
-            <button type="button" onClick={toggleSidebar} aria-label="Expand sidebar">
-              <LogoMark size={28} />
-            </button>
-          </Tooltip>
-        ) : (
-          <>
-            <Logo />
-            <IconButton
-              size="sm"
-              label="Collapse sidebar"
-              onClick={toggleSidebar}
-              className="ml-auto"
-            >
-              <Icon name="PanelLeft" size={16} strokeWidth={1.9} />
-            </IconButton>
-          </>
+      {/* The brand lives in the title bar, where the window's identity belongs.
+          What is left here is the control that resizes the column. */}
+      <div
+        className={cn(
+          'flex items-center pb-2',
+          collapsed ? 'justify-center px-0' : 'justify-end px-0.5',
         )}
+      >
+        <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} side="right">
+          <IconButton
+            size="sm"
+            label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onClick={toggleSidebar}
+          >
+            <Icon name="PanelLeft" size={15} strokeWidth={1.9} />
+          </IconButton>
+        </Tooltip>
       </div>
 
       <nav className="flex flex-col gap-0.5">

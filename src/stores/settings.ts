@@ -27,6 +27,21 @@ export interface SettingsState {
   servicePort: number;
   userName: string;
   accountLabel: string;
+  /**
+   * What the person at this machine says they keep here. Purely their own
+   * description of the archive — it shapes nothing but the welcome copy — but
+   * it is the difference between "a folder was indexed" and "your screenshots
+   * are in".
+   */
+  useCases: string[];
+  /** True once the first-run wizard has been completed or dismissed. */
+  onboarded: boolean;
+  /**
+   * True when the wizard was reopened from Settings rather than shown on a
+   * genuine first run — which is what lets it offer a way back out. Never
+   * persisted: a restart always starts from the real state.
+   */
+  onboardingRestart: boolean;
   lastBackupAt: string | null;
 
   setAppearance: (appearance: Appearance) => void;
@@ -42,6 +57,11 @@ export interface SettingsState {
   setLlmModel: (value: string) => void;
   setServicePort: (value: number) => void;
   setUserName: (value: string) => void;
+  setUseCases: (value: string[]) => void;
+  /** Finish (or deliberately skip) the first-run wizard. */
+  completeOnboarding: () => void;
+  /** Show the wizard again from Settings. */
+  restartOnboarding: () => void;
   markBackedUp: () => void;
 }
 
@@ -65,6 +85,9 @@ export const useSettingsStore = create<SettingsState>()(
       // compiled into the application.
       userName: '',
       accountLabel: 'Local Account',
+      useCases: [],
+      onboarded: false,
+      onboardingRestart: false,
       lastBackupAt: null,
 
       setAppearance: (appearance) => set({ appearance }),
@@ -97,6 +120,9 @@ export const useSettingsStore = create<SettingsState>()(
           .catch(() => undefined);
       },
       setUserName: (userName) => set({ userName }),
+      setUseCases: (useCases) => set({ useCases }),
+      completeOnboarding: () => set({ onboarded: true, onboardingRestart: false }),
+      restartOnboarding: () => set({ onboarded: false, onboardingRestart: true }),
       markBackedUp: () => set({ lastBackupAt: new Date().toISOString() }),
     }),
     {
@@ -117,6 +143,8 @@ export const useSettingsStore = create<SettingsState>()(
         servicePort: state.servicePort,
         userName: state.userName,
         accountLabel: state.accountLabel,
+        useCases: state.useCases,
+        onboarded: state.onboarded,
         lastBackupAt: state.lastBackupAt,
       }),
     },

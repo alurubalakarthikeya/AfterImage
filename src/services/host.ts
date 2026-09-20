@@ -134,6 +134,12 @@ export interface ArchiveHost {
   // ---- folders ---------------------------------------------------------- //
   /** Opens the native picker. Resolves to null when the user cancels. */
   addFolder(): Promise<ArchiveFolder | null>;
+  /**
+   * Opens the native picker for *several* folders at once — this is what
+   * onboarding offers, so the whole archive can be granted in one gesture.
+   * Resolves to an empty array when the user cancels.
+   */
+  chooseFolders(): Promise<string[]>;
   /** Registers a path directly (drag and drop, or a remembered folder). */
   addFolderPath(path: string): Promise<ArchiveFolder | null>;
   removeFolder(folderId: string): Promise<void>;

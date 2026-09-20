@@ -152,6 +152,11 @@ export function createDevelopmentHost(): ArchiveHost {
       return null;
     },
 
+    chooseFolders: async (): Promise<string[]> => {
+      emit({ type: 'notice', level: 'warn', message: DESKTOP_REQUIRED });
+      return [];
+    },
+
     /** Nothing to persist in the browser build; the preference still sticks
      * locally, it just has no pipeline to configure. */
     updatePreferences: async (): Promise<void> => undefined,

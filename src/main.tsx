@@ -1,3 +1,6 @@
+// Must come first: everything below it is what it is watching.
+import './boot';
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';

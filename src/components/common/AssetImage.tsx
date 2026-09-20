@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { reportImage } from '@/boot';
 import { getHost } from '@/services/host';
 import { cn } from '@/utils/format';
 import { Icon } from './Icon';
@@ -45,7 +46,11 @@ export function AssetImage({
       draggable={false}
       loading="lazy"
       decoding="async"
-      onError={() => setFailed(true)}
+      onLoad={() => reportImage(true, alt || 'asset image')}
+      onError={() => {
+        setFailed(true);
+        reportImage(false, path);
+      }}
       className={cn('h-full w-full object-cover', className)}
     />
   );

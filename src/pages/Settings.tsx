@@ -6,12 +6,14 @@ import { useUIStore } from '@/stores/ui';
 import { getHost, isTauri } from '@/services/host';
 import { clearDevelopmentState } from '@/services/developmentHost';
 import { cn, formatCount, formatStorage } from '@/utils/format';
+import { USE_CASES } from '@/utils/useCases';
 import { Page } from '@/components/common/Page';
 import { PageHeader } from '@/components/common/PageHeader';
 import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Icon } from '@/components/common/Icon';
 import { Badge } from '@/components/common/Badge';
+import { Avatar } from '@/components/common/Avatar';
 import { ProgressBar } from '@/components/common/ProgressBar';
 
 function Section({
@@ -140,18 +142,66 @@ export function Settings() {
 
       <Section
         icon="User"
-        title="This account"
+        title="Your profile"
         description="The name is taken from this machine when you first open AfterImage. Change it here and it is only ever stored on disk."
       >
         <Row label="Display name" hint="Used for the greeting on Home.">
-          <input
-            type="text"
-            value={settings.userName}
-            onChange={(event) => settings.setUserName(event.target.value)}
-            placeholder="Your name"
-            spellCheck={false}
-            className="h-9 w-[200px] rounded-input border border-line-strong bg-surface px-3 text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-accent/50"
-          />
+          <div className="flex items-center gap-2.5">
+            <Avatar name={settings.userName} size={30} />
+            <input
+              type="text"
+              value={settings.userName}
+              onChange={(event) => settings.setUserName(event.target.value)}
+              placeholder="Your name"
+              spellCheck={false}
+              className="h-9 w-[200px] rounded-input border border-line-strong bg-surface px-3 text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-accent/50"
+            />
+          </div>
+        </Row>
+
+        <Row
+          label="What you keep here"
+          hint="Your own description of the archive. It changes nothing about indexing."
+        >
+          <div className="flex max-w-[340px] flex-wrap justify-end gap-1.5">
+            {USE_CASES.map((item) => {
+              const selected = settings.useCases.includes(item.id);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() =>
+                    settings.setUseCases(
+                      selected
+                        ? settings.useCases.filter((value) => value !== item.id)
+                        : [...settings.useCases, item.id],
+                    )
+                  }
+                  className={cn(
+                    'inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 text-2xs font-medium transition-colors duration-150',
+                    selected
+                      ? 'border-accent/40 bg-accent-soft text-accent-ink'
+                      : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
+                  )}
+                >
+                  <Icon name={item.icon} size={12} strokeWidth={1.9} />
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        </Row>
+
+        <Row label="Setup" hint="Reopens the first-run wizard: profile, folders, summary.">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon="RefreshCw"
+            onClick={() => settings.restartOnboarding()}
+          >
+            Run setup again
+          </Button>
         </Row>
       </Section>
 
