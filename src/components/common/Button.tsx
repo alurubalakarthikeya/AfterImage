@@ -6,12 +6,15 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'subtle' | 'danger';
 type Size = 'sm' | 'md' | 'lg';
 
 const VARIANTS: Record<Variant, string> = {
+  // The primary action is a neutral block, not a coloured one: on GitHub and
+  // Vercel the only saturated thing on a page is a link or a state, and the
+  // button you are meant to press reads as the darkest thing on the surface.
   primary:
-    'bg-accent-strong text-white hover:bg-accent shadow-soft border border-transparent',
+    'bg-ink text-canvas hover:bg-ink-2 shadow-soft border border-transparent',
   secondary:
     'bg-surface text-ink border border-line hover:border-line-strong hover:bg-surface-2 shadow-soft',
   ghost: 'text-ink-2 hover:bg-surface-3 hover:text-ink border border-transparent',
-  subtle: 'bg-accent-soft text-accent-ink border border-transparent hover:bg-accent-soft/80',
+  subtle: 'bg-surface-3 text-ink border border-transparent hover:bg-sunken',
   danger: 'bg-critical text-white border border-transparent hover:opacity-90',
 };
 

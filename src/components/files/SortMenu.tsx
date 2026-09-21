@@ -41,7 +41,7 @@ export function SortMenu({ value, onChange }: { value: SortKey; onChange: (key: 
 
       {open && (
         <div
-          className="absolute right-0 top-[calc(100%+6px)] z-40 min-w-[168px] rounded-[14px] border border-line bg-surface p-1"
+          className="glass-float absolute right-0 top-[calc(100%+6px)] z-40 min-w-[168px] rounded-[14px] border border-line p-1"
           style={{ boxShadow: 'var(--af-shadow-float)' }}
           role="menu"
         >

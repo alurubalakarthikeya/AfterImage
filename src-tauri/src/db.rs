@@ -155,7 +155,7 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         CREATE TABLE IF NOT EXISTS projects (
             id         TEXT PRIMARY KEY,
             name       TEXT NOT NULL UNIQUE,
-            color      TEXT NOT NULL DEFAULT '#2F7773',
+            color      TEXT NOT NULL DEFAULT '#0969da',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -173,6 +173,42 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        -- Face grouping.
+        --
+        -- `people` holds a *suggestion* of identity: a centroid and a count.
+        -- `label` is null until the person using this machine types a name, and
+        -- nothing else in the application ever writes to that column.
+        CREATE TABLE IF NOT EXISTS people (
+            id         TEXT PRIMARY KEY,
+            label      TEXT,
+            centroid   BLOB,
+            face_count INTEGER NOT NULL DEFAULT 0,
+            hidden     INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS faces (
+            id         TEXT PRIMARY KEY,
+            file_id    TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            person_id  TEXT REFERENCES people(id) ON DELETE SET NULL,
+            -- Pixels, in the original image's own coordinates, so the renderer
+            -- can draw the box over the real picture rather than a resized copy.
+            left       REAL NOT NULL DEFAULT 0,
+            top        REAL NOT NULL DEFAULT 0,
+            width      REAL NOT NULL DEFAULT 0,
+            height     REAL NOT NULL DEFAULT 0,
+            score      REAL NOT NULL DEFAULT 0,
+            quality    REAL NOT NULL DEFAULT 0,
+            crop_path  TEXT,
+            embedding  BLOB,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_faces_file       ON faces(file_id);
+        CREATE INDEX IF NOT EXISTS idx_faces_person     ON faces(person_id);
+        CREATE INDEX IF NOT EXISTS idx_people_label     ON people(label);
 
         CREATE INDEX IF NOT EXISTS idx_files_folder     ON files(folder_id);
         CREATE INDEX IF NOT EXISTS idx_files_kind       ON files(kind);
@@ -205,6 +241,10 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
     // Columns added after the first release. `CREATE TABLE IF NOT EXISTS` does
     // nothing to an existing database, so anything new arrives by ALTER.
     ensure_column(conn, "files", "preview_path", "TEXT")?;
+    // Whether this machine has already looked for faces in a file. Separating
+    // "no faces here" from "not looked yet" is what stops the face pass from
+    // re-reading every photograph with nobody in it, forever.
+    ensure_column(conn, "files", "faces_state", "TEXT NOT NULL DEFAULT 'none'")?;
 
     Ok(())
 }
@@ -516,6 +556,14 @@ pub fn set_ocr_state(conn: &Connection, file_id: &str, state: &str) -> AppResult
 pub fn set_embedding_state(conn: &Connection, file_id: &str, state: &str) -> AppResult<()> {
     conn.execute(
         "UPDATE files SET embedding_state = ?2 WHERE id = ?1",
+        params![file_id, state],
+    )?;
+    Ok(())
+}
+
+pub fn set_faces_state(conn: &Connection, file_id: &str, state: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE files SET faces_state = ?2 WHERE id = ?1",
         params![file_id, state],
     )?;
     Ok(())
@@ -867,6 +915,12 @@ pub fn list_files(conn: &Connection, query: &FileQuery) -> AppResult<(Vec<FileRe
     if let Some(folder_id) = &query.folder_id {
         where_clause.push_str(" AND f.folder_id = ?");
         values.push(Value::Text(folder_id.clone()));
+    }
+    if let Some(person_id) = &query.person_id {
+        where_clause.push_str(
+            " AND EXISTS (SELECT 1 FROM faces fa WHERE fa.file_id = f.id AND fa.person_id = ?)",
+        );
+        values.push(Value::Text(person_id.clone()));
     }
     if let Some(project_id) = &query.project_id {
         where_clause.push_str(" AND f.project_id = ?");

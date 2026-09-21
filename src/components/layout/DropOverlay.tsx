@@ -24,7 +24,7 @@ export function DropOverlay() {
               backdropFilter: 'blur(6px)',
             }}
           >
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-accent-ink">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-3 text-ink">
               <Icon name="FolderPlus" size={22} strokeWidth={1.9} />
             </span>
             <div className="text-center">

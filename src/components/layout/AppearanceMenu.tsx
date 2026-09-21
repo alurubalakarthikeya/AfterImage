@@ -44,7 +44,7 @@ export function AppearanceMenu() {
   return (
     <div
       ref={ref}
-      className="absolute right-0 top-[calc(100%+8px)] z-50 w-[268px] rounded-card border border-line bg-surface p-3"
+      className="glass-float absolute right-0 top-[calc(100%+8px)] z-50 w-[268px] rounded-card border border-line p-3"
       style={{ boxShadow: 'var(--af-shadow-float)' }}
       role="dialog"
       aria-label="Appearance"
@@ -59,7 +59,7 @@ export function AppearanceMenu() {
             className={cn(
               'flex flex-col items-center gap-1.5 rounded-[10px] border px-2 py-2.5 text-2xs font-medium transition-colors duration-150',
               appearance === option.id
-                ? 'border-accent bg-accent-soft text-accent-ink'
+                ? 'border-accent bg-surface-3 text-ink'
                 : 'border-line text-ink-2 hover:border-line-strong hover:text-ink',
             )}
           >

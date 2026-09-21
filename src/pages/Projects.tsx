@@ -100,7 +100,7 @@ export function Projects() {
                 onClick={() => setActiveProject(selected ? null : project.id)}
                 className={cn(
                   'flex flex-col gap-3 rounded-card border p-4 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-px',
-                  selected ? 'border-accent/55 bg-accent-softer' : 'border-line bg-surface',
+                  selected ? 'border-line-strong bg-surface-2' : 'border-line bg-surface',
                 )}
                 style={{ boxShadow: 'var(--af-shadow-soft)' }}
               >

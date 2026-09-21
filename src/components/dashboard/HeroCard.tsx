@@ -48,7 +48,7 @@ export function HeroCard({ className }: { className?: string }) {
       style={
         heroSrc
           ? undefined
-          : { background: 'linear-gradient(150deg, #16332f 0%, #20504b 60%, #2f7773 100%)' }
+          : { background: 'linear-gradient(150deg, #10151c 0%, #17293f 58%, #1d4b7a 100%)' }
       }
     >
       {heroSrc && (
@@ -68,7 +68,7 @@ export function HeroCard({ className }: { className?: string }) {
             className="absolute inset-0"
             style={{
               background:
-                'linear-gradient(96deg, rgba(8,20,19,0.9) 0%, rgba(8,20,19,0.7) 46%, rgba(8,20,19,0.34) 76%, rgba(8,20,19,0.52) 100%)',
+                'linear-gradient(96deg, rgba(7,11,16,0.92) 0%, rgba(7,11,16,0.72) 46%, rgba(7,11,16,0.34) 76%, rgba(7,11,16,0.54) 100%)',
             }}
           />
         </>

@@ -24,7 +24,7 @@ function Progress({ step }: { step: number }) {
             className={cn(
               'flex h-5 items-center gap-1.5 rounded-pill px-2 text-2xs font-medium transition-colors duration-200',
               index === step
-                ? 'bg-accent-soft text-accent-ink'
+                ? 'bg-surface-3 text-ink'
                 : index < step
                   ? 'text-accent-ink'
                   : 'text-ink-3',
@@ -184,7 +184,7 @@ export function Onboarding() {
                     placeholder="Your name"
                     autoFocus
                     spellCheck={false}
-                    className="mt-1 h-10 w-full rounded-input border border-line-strong bg-surface px-3 text-body text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-accent/50"
+                    className="mt-1 h-10 w-full rounded-input border border-line-strong bg-surface px-3 text-body text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-line-strong"
                   />
                 </div>
               </div>
@@ -205,7 +205,7 @@ export function Onboarding() {
                         className={cn(
                           'inline-flex h-8 items-center gap-1.5 rounded-pill border px-3 text-meta font-medium transition-colors duration-150',
                           selected
-                            ? 'border-accent/40 bg-accent-soft text-accent-ink'
+                            ? 'border-line-strong bg-surface-3 text-ink'
                             : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
                         )}
                       >
@@ -248,7 +248,7 @@ export function Onboarding() {
                     placeholder="…or paste an absolute path"
                     aria-label="Folder path"
                     spellCheck={false}
-                    className="h-10 min-w-0 flex-1 rounded-input border border-line-strong bg-surface px-3 font-mono text-meta text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-accent/50"
+                    className="h-10 min-w-0 flex-1 rounded-input border border-line-strong bg-surface px-3 font-mono text-meta text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-line-strong"
                   />
                   <Button
                     type="submit"

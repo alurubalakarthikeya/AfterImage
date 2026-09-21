@@ -252,6 +252,86 @@ export interface SearchResponse {
   error: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+/**
+ * A group of faces the index believes is one person — believed, never asserted.
+ *
+ * `label` is whatever the user typed and nothing else. There is no generated
+ * name here on purpose: a wrong name on a face is worse than a blank one,
+ * because only one of the two is obviously wrong to look at.
+ */
+export interface Person {
+  id: string;
+  label?: string;
+  /** Faces detected in this group. */
+  faceCount: number;
+  /** Distinct photographs containing them — the number worth showing. */
+  fileCount: number;
+  hidden: boolean;
+  /** Absolute paths of up to four face crops, best first. */
+  samples: string[];
+  coverPath?: string;
+  /**
+   * When the newest photograph in this group was taken — the only date that
+   * means anything for a person, and what the timeline view orders by.
+   */
+  lastSeenAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One detected face in one file. */
+export interface FileFace {
+  id: string;
+  personId?: string;
+  /** Pixels, in the image's own coordinates. */
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  score: number;
+  quality: number;
+  cropPath?: string;
+  label?: string;
+  /** The group was hidden, so this face links nowhere. */
+  personHidden: boolean;
+}
+
+export interface PeopleStats {
+  people: number;
+  faces: number;
+  /** Groups nobody has named yet — the work the user actually has to do. */
+  unnamed: number;
+  photos: number;
+}
+
+export interface PeopleSnapshot {
+  people: Person[];
+  stats: PeopleStats;
+  /** False when the face models are not installed; a supported way to run. */
+  available: boolean;
+  reason?: string;
+}
+
+/** One downloadable model bundle, with the cost of not having it. */
+export interface ModelBundle {
+  name: string;
+  ready: boolean;
+  megabytes: number;
+}
+
+export interface ModelStatus {
+  bundles: ModelBundle[];
+  /** False when the indexing service is not answering at all. */
+  available: boolean;
+  missingMegabytes: number;
+  directory?: string;
+  reason?: string;
+}
+
 export type ViewMode = 'grid' | 'list' | 'timeline';
 
 export type Appearance = 'light' | 'dark' | 'system';
@@ -266,6 +346,9 @@ export type RouteId =
   | 'screenshots'
   | 'documents'
   | 'videos'
+  /** Every group of faces, and the person route for one of them. */
+  | 'people'
+  | 'person'
   | 'projects'
   | 'collections'
   | 'search'

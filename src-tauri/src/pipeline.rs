@@ -1,9 +1,11 @@
 //! The processing pipeline.
 //!
+//! ```text
 //!     watcher ─▶ scan ─▶ SQLite row (pending)
 //!                          │
 //!                          ▼
-//!              thumbnail ─▶ text ─▶ title ─▶ embedding ─▶ SQLite row (indexed)
+//!         thumbnail ─▶ text ─▶ title ─▶ embedding ─▶ faces ─▶ row (indexed)
+//! ```
 //!
 //! One worker thread, one file at a time, with progress pushed to the interface
 //! as events. Rows exist from the moment a file is discovered, so the grid fills
@@ -25,8 +27,9 @@ use tauri::{AppHandle, Emitter};
 use crate::db::{self, STATE_FAILED, STATE_INDEXED};
 use crate::error::{AppError, AppResult};
 use crate::models::IndexStatus;
+use crate::people;
 use crate::scan::kind_supports_text;
-use crate::service::{self, TextOutcome};
+use crate::service::{self, FaceOutcome, TextOutcome};
 use crate::state::AppState;
 use crate::thumbs;
 
@@ -35,6 +38,12 @@ pub struct Job {
     pub file_id: String,
     pub path: String,
     pub kind: String,
+    /// Run the face stage and nothing else.
+    ///
+    /// Installing the face models must not mean re-reading every photograph for
+    /// text and embeddings that are already in the index. A face-only pass is
+    /// how "look for faces in what you have already indexed" stays cheap.
+    pub faces_only: bool,
 }
 
 /// Hand jobs to the worker. Dropping the sender ends the thread.
@@ -116,6 +125,8 @@ fn worker(app: AppHandle, state: Arc<AppState>, receiver: Receiver<Job>) {
         };
         emit_status(&app, &state, state_name);
         if state_name == "idle" {
+            // The queue draining is when a regroup becomes worth doing, and when
+            // the interface should stop showing a half-built set of people.
             let _ = app.emit("archive://changed", "index");
         }
     }
@@ -132,6 +143,10 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
     let port = state.service_port.load(Ordering::Relaxed);
     let service_enabled = state.service_enabled.load(Ordering::Relaxed);
     let semantic_enabled = state.semantic_enabled.load(Ordering::Relaxed);
+
+    if job.faces_only {
+        return faces_stage(state, job, port, service_enabled);
+    }
 
     {
         let conn = state.db()?;
@@ -221,12 +236,71 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
         db::set_embedding_state(&conn, &job.file_id, if indexed { "indexed" } else { "unavailable" })?;
     }
 
+    // ---- 5. Faces ---------------------------------------------------------
+    faces_stage(state, job, port, service_enabled)?;
+
     // Whatever happened above, the row is now as complete as this machine can
     // make it. `ocr_state` and `thumb_path` carry the nuance — whether there is
     // text, whether there is a picture — so "indexed" here means the pipeline
     // has finished with the file, not that every stage succeeded.
     let conn = state.db()?;
     db::set_index_state(&conn, &job.file_id, STATE_INDEXED)?;
+    Ok(())
+}
+
+/**
+ * Find the faces in one photograph and file them under somebody.
+ *
+ * Grouping happens in this process rather than in the service, next to the rows
+ * it writes: a face that is detected but never assigned would be invisible to
+ * the user for good, because nothing else in the application revisits a file
+ * once it is indexed.
+ */
+fn faces_stage(state: &Arc<AppState>, job: &Job, port: u16, service_enabled: bool) -> AppResult<()> {
+    if !state.faces_enabled.load(Ordering::Relaxed) || !service_enabled {
+        return Ok(());
+    }
+    if !matches!(job.kind.as_str(), "photo" | "screenshot" | "design") {
+        return Ok(());
+    }
+    if !state.faces_dir.exists() {
+        std::fs::create_dir_all(&state.faces_dir).ok();
+    }
+
+    let faces_dir = state.faces_dir.to_string_lossy().to_string();
+    match service::detect_faces(port, &job.path, &job.kind, &job.file_id, &faces_dir) {
+        FaceOutcome::Faces(found) => {
+            let detected: Vec<people::DetectedFace> = found
+                .into_iter()
+                .map(|face| people::DetectedFace {
+                    left: face.left,
+                    top: face.top,
+                    width: face.width,
+                    height: face.height,
+                    score: face.score,
+                    quality: face.quality,
+                    embedding: face.embedding,
+                    crop_path: face.crop_path,
+                })
+                .collect();
+            let conn = state.db()?;
+            people::store_file_faces(&conn, &job.file_id, &detected)?;
+            // "scanned" deliberately does not mean "found faces": a photograph
+            // of a landscape has been looked at, and looking again would cost the
+            // same for the same answer.
+            db::set_faces_state(&conn, &job.file_id, "scanned")?;
+        }
+        FaceOutcome::Empty => {
+            let conn = state.db()?;
+            people::clear_file_faces(&conn, &job.file_id)?;
+            db::set_faces_state(&conn, &job.file_id, "scanned")?;
+        }
+        // No model installed. The file keeps `faces_state = 'none'`, so it is
+        // picked up the moment one is.
+        FaceOutcome::Unavailable { reason } => {
+            log::debug!("no faces for {}: {reason}", job.path);
+        }
+    }
     Ok(())
 }
 

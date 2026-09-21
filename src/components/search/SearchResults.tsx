@@ -28,7 +28,7 @@ function HighlightedText({ text, terms }: { text: string; terms: string[] }) {
     <>
       {segments.map((segment, index) =>
         segment.hit ? (
-          <mark key={index} className="rounded-[3px] bg-accent-soft px-0.5 text-accent-ink">
+          <mark key={index} className="rounded-[3px] bg-highlight px-0.5 text-highlight-ink">
             {segment.text}
           </mark>
         ) : (
@@ -142,7 +142,7 @@ export function SearchResults({ onOpen }: { onOpen?: (fileId: string) => void })
             className={cn(
               'flex cursor-default items-start gap-3 rounded-card border px-3 py-2.5 transition-colors duration-150',
               selected
-                ? 'border-accent/50 bg-accent-softer'
+                ? 'border-line-strong bg-surface-2'
                 : 'border-transparent hover:border-line hover:bg-surface',
             )}
           >

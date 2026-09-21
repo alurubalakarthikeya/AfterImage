@@ -58,6 +58,7 @@ pub fn scan_folder(
             file_id: file_id.clone(),
             path: path.clone(),
             kind: kind.clone(),
+            faces_only: false,
         })
         .collect();
 
@@ -146,6 +147,7 @@ pub fn retryable(conn: &rusqlite::Connection) -> AppResult<Vec<Job>> {
             file_id: row.get(0)?,
             path: row.get(1)?,
             kind: row.get(2)?,
+            faces_only: false,
         })
     })?;
     let jobs: Vec<Job> = rows.collect::<rusqlite::Result<Vec<_>>>()?;

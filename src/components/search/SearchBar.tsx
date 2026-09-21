@@ -141,7 +141,7 @@ export function SearchBar({ className }: { className?: string }) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.14, ease: [0.2, 0.8, 0.2, 1] }}
-            className="absolute left-0 right-0 top-[calc(100%+8px)] z-40 overflow-hidden rounded-card border border-line bg-surface"
+            className="glass-float absolute left-0 right-0 top-[calc(100%+8px)] z-40 overflow-hidden rounded-card border border-line"
             style={{ boxShadow: 'var(--af-shadow-float)' }}
           >
             {draft.trim() && interpretation && (
@@ -189,7 +189,7 @@ export function SearchBar({ className }: { className?: string }) {
                     void submit(draft);
                     setFocused(false);
                   }}
-                  className="mt-1 flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-meta font-medium text-accent-ink transition-colors duration-150 hover:bg-accent-softer"
+                  className="mt-1 flex w-full items-center justify-between rounded-[10px] px-2.5 py-2 text-meta font-medium text-accent-ink transition-colors duration-150 hover:bg-surface-2"
                 >
                   <span>Show all {formatCount(total)} results</span>
                   <Icon name="CornerDownLeft" size={13} />

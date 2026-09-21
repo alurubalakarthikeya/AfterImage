@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 Kind = Literal[
     "photo",
@@ -125,3 +125,83 @@ class HealthResponse(BaseModel):
     capabilities: dict[str, object] = {}
     llm: dict[str, object] = {}
     indexedVectors: int = 0
+
+
+# --------------------------------------------------------------------------- #
+# Faces
+# --------------------------------------------------------------------------- #
+
+
+class FacesRequest(BaseModel):
+    """Find the faces in one image.
+
+    ``faces_dir`` is where the aligned crops are written when it is given. The
+    desktop shell owns the paths it will later serve to the webview, so the
+    service writes into the directory it is handed rather than choosing one.
+
+    ``file_id`` accepts either spelling. The desktop shell sends camelCase, like
+    every other request it makes; the field is declared snake_case, like every
+    other field here; and unlike the rest of the surface this one is not
+    cosmetic — the id decides the crop filenames, so a request that silently
+    dropped it would write crops under a name derived from the path instead.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    path: str
+    kind: Kind = "photo"
+    file_id: str | None = Field(default=None, alias="fileId")
+    faces_dir: str | None = None
+
+
+class FaceBox(BaseModel):
+    """Pixels, in the original image's own coordinates."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class DetectedFaceOut(BaseModel):
+    box: FaceBox
+    # Detector confidence. Never shown to the user: it is the model's opinion of
+    # its own answer, not a fact about the photograph.
+    score: float
+    # Size, confidence and centrality combined — what decides which face becomes
+    # somebody's portrait when the group is built.
+    quality: float
+    # 128-d SFace vector. Grouping happens in the desktop shell, next to the
+    # database that stores it.
+    embedding: list[float]
+    cropPath: str | None = None
+
+
+class FacesResponse(BaseModel):
+    fileId: str | None = None
+    available: bool
+    engine: str = "none"
+    reason: str | None = None
+    faces: list[DetectedFaceOut] = []
+
+
+class ModelEnsureRequest(BaseModel):
+    """Fetch the model bundles named here, and only those."""
+
+    bundles: list[str] = ["faces"]
+
+
+class ModelBundleOut(BaseModel):
+    name: str
+    ready: bool
+    megabytes: float
+
+
+class ModelStatusResponse(BaseModel):
+    """What is installed, and what it would cost to install the rest."""
+
+    available: bool
+    bundles: list[ModelBundleOut]
+    missingMegabytes: float
+    directory: str | None = None
+    reason: str | None = None

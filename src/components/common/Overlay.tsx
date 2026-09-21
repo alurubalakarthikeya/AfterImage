@@ -76,7 +76,7 @@ export function Modal({
               transition={{ duration: 0.18, ease: EASE }}
               onClick={(event) => event.stopPropagation()}
               className={cn(
-                'pointer-events-auto w-full max-w-[560px] overflow-hidden rounded-card-lg border border-line bg-surface',
+                'glass-float pointer-events-auto w-full max-w-[560px] overflow-hidden rounded-card-lg border border-line',
                 className,
               )}
               style={{ boxShadow: 'var(--af-shadow-float)' }}

@@ -13,6 +13,9 @@ import { Button } from '@/components/common/Button';
 import { Icon } from '@/components/common/Icon';
 import { EmptyState } from '@/components/common/EmptyState';
 import { AssetImage } from '@/components/common/AssetImage';
+import { IconButton } from '@/components/common/IconButton';
+import { Modal } from '@/components/common/Overlay';
+import { Tooltip } from '@/components/common/Tooltip';
 import { FileViews } from '@/components/files/FileViews';
 
 const TONE: Record<SurfaceTone, { bg: string; ink: string }> = {
@@ -49,7 +52,11 @@ export function Collections() {
   const activeId = useUIStore((state) => state.activeCollectionId);
   const setActiveCollection = useUIStore((state) => state.setActiveCollection);
   const beginDraft = useCollectionStore((state) => state.beginDraft);
+  const deleteCollection = useArchiveStore((state) => state.deleteCollection);
   const [sort] = useState<'recent'>('recent');
+  // Deleting a collection is a delete of a *view*, never of the files in it, so
+  // the confirmation says so rather than warning about data loss.
+  const [doomed, setDoomed] = useState<ArchiveCollection | null>(null);
 
   const active = collections.find((collection) => collection.id === activeId) ?? null;
   const result = useFileQuery(active ? { collectionId: active.id, sort } : null);
@@ -87,22 +94,27 @@ export function Collections() {
             const tone = TONE[collection.surface];
             const preview = collection.preview.slice(0, 4);
             return (
-              <button
-                key={collection.id}
-                type="button"
-                onClick={() => setActiveCollection(selected ? null : collection.id)}
-                className={cn(
-                  'group/col flex flex-col gap-3 rounded-card border p-3.5 text-left transition-[border-color,transform] duration-150 hover:-translate-y-px',
-                  selected ? 'border-accent/55' : 'border-line hover:border-line-strong',
-                  tone.bg,
-                )}
-              >
+              <div key={collection.id} className="group/col relative">
+                <button
+                  type="button"
+                  onClick={() => setActiveCollection(selected ? null : collection.id)}
+                  className={cn(
+                    'flex w-full flex-col gap-3 rounded-card border p-3.5 text-left transition-[border-color,transform] duration-150 hover:-translate-y-px',
+                    selected ? 'border-line-strong' : 'border-line hover:border-line-strong',
+                    tone.bg,
+                  )}
+                >
                 <div className="flex items-start justify-between gap-2">
                   <span className={cn('flex min-w-0 items-center gap-2', tone.ink)}>
                     <Icon name={collection.icon} size={15} strokeWidth={1.9} className="shrink-0" />
                     <span className="truncate text-card font-semibold">{collection.name}</span>
                   </span>
-                  <span className={cn('shrink-0 text-2xs tabular-nums opacity-70', tone.ink)}>
+                  <span
+                    className={cn(
+                      'shrink-0 text-2xs tabular-nums opacity-70 transition-opacity duration-150 group-hover/col:opacity-0',
+                      tone.ink,
+                    )}
+                  >
                     {formatCount(collection.fileCount)}
                   </span>
                 </div>
@@ -135,7 +147,22 @@ export function Collections() {
                     </span>
                   )}
                 </div>
-              </button>
+                </button>
+
+                {/* Outside the card's own button, because a button inside a
+                    button is not something a browser will honour. */}
+                <Tooltip label="Delete collection" side="left">
+                  <IconButton
+                    label={`Delete ${collection.name}`}
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setDoomed(collection)}
+                    className="absolute right-1.5 top-1.5 opacity-0 transition-opacity duration-150 focus-visible:opacity-100 group-hover/col:opacity-100 hover:text-critical"
+                  >
+                    <Icon name="Trash2" size={14} strokeWidth={1.9} />
+                  </IconButton>
+                </Tooltip>
+              </div>
             );
           })}
         </div>
@@ -163,6 +190,36 @@ export function Collections() {
           Collections are views over the index — they never move or copy files on disk.
         </p>
       )}
+
+      <Modal open={doomed !== null} onClose={() => setDoomed(null)} className="max-w-[440px]">
+        <div className="p-5">
+          <h2 className="text-section font-semibold text-ink">Delete {doomed?.name}?</h2>
+          <p className="mt-2 text-meta leading-relaxed text-ink-2">
+            The collection is removed. The {formatCount(doomed?.fileCount ?? 0)} files inside it
+            stay exactly where they are — a collection is a view over the index, so nothing on
+            disk is moved, renamed or deleted.
+          </p>
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setDoomed(null)}>
+              Keep it
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              icon="Trash2"
+              onClick={() => {
+                const collection = doomed;
+                setDoomed(null);
+                if (!collection) return;
+                if (collection.id === activeId) setActiveCollection(null);
+                void deleteCollection(collection.id);
+              }}
+            >
+              Delete collection
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </Page>
   );
 }

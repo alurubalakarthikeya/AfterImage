@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { getHost } from '@/services/host';
 import { useArchiveStore } from '@/stores/archive';
+import { usePeopleStore } from '@/stores/people';
 import { useUIStore } from '@/stores/ui';
 
 /**
@@ -23,6 +24,16 @@ export function useHostBridge(): void {
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
         void useArchiveStore.getState().refresh();
+
+        // People ride along on the same events. Two things make this necessary
+        // rather than tidy: groups are *created* by indexing, so the count in
+        // the sidebar changes while nobody is looking at that page; and the
+        // indexing service takes a few seconds to start, so the first read of
+        // the model store can honestly answer "not installed" on a cold launch
+        // and would otherwise stay wrong until the app was restarted.
+        const people = usePeopleStore.getState();
+        if (people.status !== 'idle') void people.refresh();
+        if (!people.models?.available) void people.loadModels();
       }, delay);
     };
 
@@ -51,6 +62,13 @@ export function useHostBridge(): void {
           scheduleRefresh(200);
           return;
         }
+        case 'models-changed': {
+          // What this machine can now do has changed, so the capability answers
+          // are re-read rather than assumed.
+          void usePeopleStore.getState().loadModels();
+          void usePeopleStore.getState().refresh();
+          return;
+        }
         case 'notice': {
           ui.pushNotice({ level: event.level, message: event.message });
           return;
@@ -59,6 +77,10 @@ export function useHostBridge(): void {
           return;
       }
     });
+
+    // The sidebar shows how many people the archive holds, so the groups are
+    // read once the archive is open — not only when the People page is visited.
+    void usePeopleStore.getState().load();
 
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);

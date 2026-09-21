@@ -36,28 +36,31 @@
        * the splash. Deliberately self-contained — index.css arrives with the
        * bundle, which is exactly the thing being waited on.
        */
+      /* Mirrors the design tokens in src/index.css. Duplicated because this
+         block has to paint before the bundle that owns them arrives, and a
+         splash that appears in the wrong theme is worse than no splash. */
       :root {
-        --af-canvas: #f4f7f6;
-        --af-ink: #142124;
-        --af-ink-2: #697879;
-        --af-ink-3: #93a1a0;
-        --af-accent: #2f7773;
-        --af-accent-soft: #dcefed;
-        --af-line: rgba(20, 33, 36, 0.08);
-        --af-glow: rgba(47, 119, 115, 0.13);
-        --af-track: rgba(20, 33, 36, 0.08);
+        --af-canvas: #f6f8fa;
+        --af-ink: #1f2328;
+        --af-ink-2: #59636e;
+        --af-ink-3: #818b98;
+        --af-accent: #0969da;
+        --af-accent-soft: #ddf4ff;
+        --af-line: rgba(31, 35, 40, 0.09);
+        --af-glow: rgba(9, 105, 218, 0.1);
+        --af-track: rgba(31, 35, 40, 0.08);
       }
 
       html[data-theme='dark'] {
-        --af-canvas: #0f1514;
-        --af-ink: #e9f0ef;
-        --af-ink-2: #98a6a4;
-        --af-ink-3: #6c7a78;
-        --af-accent: #4fa39b;
-        --af-accent-soft: #1c3331;
-        --af-line: rgba(233, 240, 239, 0.09);
-        --af-glow: rgba(79, 163, 155, 0.14);
-        --af-track: rgba(233, 240, 239, 0.1);
+        --af-canvas: #010409;
+        --af-ink: #f0f6fc;
+        --af-ink-2: #9198a1;
+        --af-ink-3: #6e7681;
+        --af-accent: #4493f8;
+        --af-accent-soft: #16263d;
+        --af-line: rgba(240, 246, 252, 0.1);
+        --af-glow: rgba(68, 147, 248, 0.13);
+        --af-track: rgba(240, 246, 252, 0.1);
       }
 
       html,

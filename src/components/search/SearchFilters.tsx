@@ -66,7 +66,7 @@ export function SearchFilters() {
               onClick={() => setFilter({ kind: active ? undefined : option.kind })}
               className={cn(
                 'flex h-8 items-center gap-2.5 rounded-[9px] px-2 text-left text-meta transition-colors duration-150',
-                active ? 'bg-accent-soft text-accent-ink' : 'text-ink-2 hover:bg-surface-3 hover:text-ink',
+                active ? 'bg-surface-3 text-ink' : 'text-ink-2 hover:bg-surface-3 hover:text-ink',
               )}
             >
               <Icon name={option.icon} size={14} strokeWidth={1.9} />
@@ -89,7 +89,7 @@ export function SearchFilters() {
                 className={cn(
                   'rounded-pill px-2.5 py-1 text-2xs transition-colors duration-150',
                   active
-                    ? 'bg-accent-soft text-accent-ink'
+                    ? 'bg-surface-3 text-ink'
                     : 'bg-surface-2 text-ink-2 hover:bg-surface-3 hover:text-ink',
                 )}
               >
@@ -132,7 +132,7 @@ export function SearchFilters() {
                 className={cn(
                   'inline-flex items-center gap-1 rounded-pill px-2.5 py-1 text-2xs transition-colors duration-150',
                   active
-                    ? 'bg-accent-soft text-accent-ink'
+                    ? 'bg-surface-3 text-ink'
                     : 'bg-surface-2 text-ink-2 hover:bg-surface-3 hover:text-ink',
                 )}
               >                  #{tag.name}

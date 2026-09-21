@@ -14,14 +14,14 @@ const SIZES: Record<Size, string> = {
 const VARIANTS: Record<Variant, string> = {
   ghost: 'text-ink-2 hover:bg-surface-3 hover:text-ink',
   soft: 'bg-surface-2 text-ink-2 hover:bg-surface-3 hover:text-ink border border-line',
-  solid: 'bg-accent text-white hover:bg-accent-strong',
+  solid: 'bg-ink text-canvas hover:bg-ink-2',
   outline: 'border border-line text-ink-2 hover:border-line-strong hover:text-ink',
 };
 
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: Size;
   variant?: Variant;
-  /** Selected state uses the soft accent fill, never a saturated block. */
+  /** Selected state is a neutral fill, never a saturated block. */
   active?: boolean;
   label: string;
   children: ReactNode;
@@ -43,7 +43,7 @@ export const IconButton = forwardRef(function IconButton(
         'disabled:pointer-events-none disabled:opacity-40',
         SIZES[size],
         VARIANTS[variant],
-        active && 'bg-accent-soft text-accent-ink hover:bg-accent-soft hover:text-accent-ink',
+        active && 'bg-surface-3 text-ink',
         className,
       )}
       {...rest}

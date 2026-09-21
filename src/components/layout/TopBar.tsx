@@ -34,7 +34,7 @@ function NotificationBell() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] overflow-hidden rounded-card border border-line bg-surface"
+            className="glass-float absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] overflow-hidden rounded-card border border-line"
             style={{ boxShadow: 'var(--af-shadow-float)' }}
             role="dialog"
             aria-label="Notifications"
@@ -71,7 +71,7 @@ function NotificationBell() {
                 setOpen(false);
                 navigate('home');
               }}
-              className="w-full border-t border-line py-2.5 text-meta font-medium text-accent-ink transition-colors duration-150 hover:bg-accent-softer"
+              className="w-full border-t border-line py-2.5 text-meta font-medium text-accent-ink transition-colors duration-150 hover:bg-surface-2"
             >
               Open activity
             </button>

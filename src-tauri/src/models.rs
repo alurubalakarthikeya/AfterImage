@@ -223,6 +223,10 @@ pub struct FileQuery {
     pub kinds: Option<Vec<String>>,
     #[serde(default)]
     pub folder_id: Option<String>,
+    /// Only files in which this person's face was detected. A virtual folder in
+    /// the literal sense: the rows were never grouped on disk.
+    #[serde(default)]
+    pub person_id: Option<String>,
     #[serde(default)]
     pub tag_id: Option<String>,
     #[serde(default)]
@@ -299,6 +303,103 @@ pub struct SearchHit {
     pub snippet: Option<String>,
     /// True when only the vector index found it.
     pub semantic: bool,
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+/// A group of faces believed to be one person — believed, never asserted.
+/// `label` is whatever the user typed, and nothing else.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Person {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Faces detected in this person's group.
+    pub face_count: i64,
+    /// Distinct files containing them — the number the card shows.
+    pub file_count: i64,
+    pub hidden: bool,
+    /// When the newest photograph in this group was taken. `None` for a group
+    /// whose files have all been removed — the timeline view says so rather
+    /// than filing it under today.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<String>,
+    /// Absolute paths of up to four face crops, best first.
+    pub samples: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_path: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One detected face, as the inspector and the image overlay need it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileFace {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub person_id: Option<String>,
+    /// Pixels in the original image's own coordinates.
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+    pub score: f64,
+    pub quality: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The group was hidden by the user, so the face is not linked anywhere.
+    pub person_hidden: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleStats {
+    pub people: i64,
+    pub faces: i64,
+    /// Groups nobody has named yet — the queue the user actually works through.
+    pub unnamed: i64,
+    pub photos: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleSnapshot {
+    pub people: Vec<Person>,
+    pub stats: PeopleStats,
+    /// False when the face models are not installed on this machine, which is a
+    /// supported way to run AfterImage rather than a fault.
+    pub available: bool,
+    /// Why they are not installed, when they are not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// One downloadable model bundle, with the cost of not having it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelBundle {
+    pub name: String,
+    pub ready: bool,
+    pub megabytes: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStatus {
+    pub bundles: Vec<ModelBundle>,
+    /// False when the indexing service is not answering at all.
+    pub available: bool,
+    pub missing_megabytes: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

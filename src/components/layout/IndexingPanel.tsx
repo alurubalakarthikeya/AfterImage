@@ -56,7 +56,7 @@ export function IndexingPanel() {
       ref={ref}
       role="dialog"
       aria-label="Indexing"
-      className="af-fade-in fixed left-4 top-[60px] z-[70] w-[380px] rounded-card border border-line bg-surface p-4"
+      className="glass-float af-fade-in fixed left-4 top-[60px] z-[70] w-[380px] rounded-card border border-line p-4"
       style={{ boxShadow: 'var(--af-shadow-float)' }}
     >
       <div className="flex items-start justify-between gap-3">

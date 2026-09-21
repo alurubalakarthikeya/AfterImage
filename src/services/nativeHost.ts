@@ -3,7 +3,11 @@ import type {
   ArchiveCollection,
   ArchiveFile,
   ArchiveFolder,
+  FileFace,
   IndexStatus,
+  ModelStatus,
+  PeopleSnapshot,
+  Person,
   Project,
   SearchHit,
   SearchQuery,
@@ -90,6 +94,12 @@ export function createNativeHost(): ArchiveHost {
       );
 
       unlisten.push(
+        await listen<void>('archive://models', () => {
+          emit({ type: 'models-changed' });
+        }),
+      );
+
+      unlisten.push(
         await listen<string>('archive://notice', (event) => {
           const [level, ...rest] = (event.payload ?? '').split('|');
           emit({
@@ -158,6 +168,18 @@ export function createNativeHost(): ArchiveHost {
     pauseIndexing: () => invoke<void>('pause_indexing'),
     resumeIndexing: () => invoke<void>('resume_indexing'),
     clearFailures: () => invoke<void>('clear_failures'),
+
+    people: () => invoke<PeopleSnapshot>('people_snapshot'),
+    person: (personId) => invoke<Person | null>('person', { personId }),
+    fileFaces: (fileId) => invoke<FileFace[]>('file_faces', { fileId }),
+    renamePerson: (personId, label) => invoke<void>('rename_person', { personId, label }),
+    mergePeople: (fromId, intoId) => invoke<void>('merge_people', { fromId, intoId }),
+    setPersonHidden: (personId, hidden) => invoke<void>('set_person_hidden', { personId, hidden }),
+    forgetPerson: (personId) => invoke<number>('forget_person', { personId }),
+    regroupPeople: () => invoke<number>('regroup_people'),
+    scanFaces: () => invoke<number>('scan_faces'),
+    modelStatus: () => invoke<ModelStatus>('model_status'),
+    installModels: (bundles) => invoke<void>('install_models', { bundles }),
 
     search: (query: SearchQuery) => invoke<SearchResponse>('search_archive', { query }),
     similar: (fileId, limit) => invoke<SearchHit[]>('similar_files', { fileId, limit }),

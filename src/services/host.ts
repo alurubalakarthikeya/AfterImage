@@ -4,8 +4,12 @@ import type {
   ArchiveFile,
   ArchiveFolder,
   ArchiveTotals,
+  FileFace,
   FileKind,
   IndexStatus,
+  ModelStatus,
+  PeopleSnapshot,
+  Person,
   Project,
   SearchHit,
   SearchQuery,
@@ -51,6 +55,8 @@ export interface HostCapabilities {
 export interface FileQuery {
   kinds?: FileKind[];
   folderId?: string;
+  /** Only files in which this person's face was found. */
+  personId?: string;
   tagId?: string;
   collectionId?: string;
   projectId?: string;
@@ -100,6 +106,8 @@ export type HostEvent =
   | { type: 'files-changed'; reason: 'watch' | 'scan' | 'delete' | 'index' | 'metadata' }
   | { type: 'index-status'; status: IndexStatus }
   | { type: 'folders-changed' }
+  /** A model download finished, so what the machine can do has changed. */
+  | { type: 'models-changed' }
   | { type: 'notice'; level: 'info' | 'warn' | 'error'; message: string };
 
 export type HostListener = (event: HostEvent) => void;
@@ -154,6 +162,32 @@ export interface ArchiveHost {
   resumeIndexing(): Promise<void>;
   /** Give up on files that failed, so the queue can drain. */
   clearFailures(): Promise<void>;
+
+  // ---- people ----------------------------------------------------------- //
+  /** Every group of faces, with the numbers behind them. */
+  people(): Promise<PeopleSnapshot>;
+  person(personId: string): Promise<Person | null>;
+  /** Every face in one file, for the inspector. */
+  fileFaces(fileId: string): Promise<FileFace[]>;
+  /** "" clears the name; the group goes back to being unnamed. */
+  renamePerson(personId: string, label: string | null): Promise<void>;
+  /** Fold one group into another — the correction for a wrong merge. */
+  mergePeople(fromId: string, intoId: string): Promise<void>;
+  setPersonHidden(personId: string, hidden: boolean): Promise<void>;
+  /**
+   * Delete a group and the faces behind it, for the clusters that were never a
+   * person at all. Answers with how many faces went with it. No photograph is
+   * touched, and the group cannot reassemble itself on the next pass.
+   */
+  forgetPerson(personId: string): Promise<number>;
+  /** Regroup the whole library. Answers with the number of groups. */
+  regroupPeople(): Promise<number>;
+  /** Look for faces in everything already indexed. Answers with files queued. */
+  scanFaces(): Promise<number>;
+  /** What the local model store holds, and what completing it would cost. */
+  modelStatus(): Promise<ModelStatus>;
+  /** Fetch model bundles. Returns once the download is under way. */
+  installModels(bundles: string[]): Promise<void>;
 
   // ---- retrieval -------------------------------------------------------- //
   search(query: SearchQuery): Promise<SearchResponse>;

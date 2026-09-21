@@ -66,7 +66,7 @@ export function ContextMenu({
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.98 }}
       transition={{ duration: 0.12, ease: [0.2, 0.8, 0.2, 1] }}
-      className="fixed z-[60] min-w-[218px] overflow-visible rounded-[14px] border border-line bg-surface p-1"
+      className="glass-float fixed z-[60] min-w-[218px] overflow-visible rounded-[14px] border border-line p-1"
       style={{ left: position.x, top: position.y, boxShadow: 'var(--af-shadow-float)' }}
       role="menu"
     >
@@ -108,7 +108,7 @@ export function ContextMenu({
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.12 }}
-                className="absolute left-[calc(100%-2px)] top-0 z-[61] min-w-[196px] rounded-[14px] border border-line bg-surface p-1"
+                className="glass-float absolute left-[calc(100%-2px)] top-0 z-[61] min-w-[196px] rounded-[14px] border border-line p-1"
                 style={{ boxShadow: 'var(--af-shadow-float)' }}
               >
                 {item.submenu.length === 0 ? (

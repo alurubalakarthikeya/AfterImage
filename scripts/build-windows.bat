@@ -49,6 +49,12 @@ if "%~1"=="--debug" (
   exit /b 0
 )
 
+if "%~1"=="--test" (
+  echo [build] cargo test
+  cargo test --manifest-path src-tauri\Cargo.toml || exit /b 1
+  exit /b 0
+)
+
 echo [build] npm run tauri build
 call npm run tauri build || exit /b 1
 

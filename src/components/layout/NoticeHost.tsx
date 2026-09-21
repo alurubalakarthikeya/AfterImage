@@ -40,7 +40,7 @@ export function NoticeHost() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.99 }}
             transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
-            className="pointer-events-auto flex max-w-[520px] items-center gap-3 rounded-card border border-line bg-surface px-3.5 py-2.5"
+            className="glass-float pointer-events-auto flex max-w-[520px] items-center gap-3 rounded-card border border-line px-3.5 py-2.5"
             style={{ boxShadow: 'var(--af-shadow-float)' }}
             role="status"
           >

@@ -360,7 +360,7 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 text-2xs transition-colors duration-150',
                   item.id === file.projectId
-                    ? 'bg-accent-soft text-accent-ink'
+                    ? 'bg-surface-3 text-ink'
                     : 'bg-surface-2 text-ink-2 hover:bg-surface-3 hover:text-ink',
                 )}
               >
@@ -415,7 +415,7 @@ export function Inspector() {
     // `[&>*]:shrink-0` matters: without it the column's children are allowed to
     // compress, and a fixed-height card (the promo panel) collapses to a strip.
     <aside
-      className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1 [&>*]:shrink-0"
+      className="glass flex min-h-0 flex-col gap-4 overflow-y-auto rounded-panel border border-line p-3 [&>*]:shrink-0"
       aria-label="Inspector"
     >
       {selected.length === 0 && <IdleInspector />}

@@ -14,7 +14,7 @@ type Tone = 'neutral' | 'accent' | 'positive' | 'caution' | 'critical';
 
 const TONES: Record<Tone, string> = {
   neutral: 'bg-surface-3 text-ink-2',
-  accent: 'bg-accent-soft text-accent-ink',
+  accent: 'bg-surface-3 text-ink',
   positive: 'bg-positive/12 text-positive',
   caution: 'bg-caution/12 text-caution',
   critical: 'bg-critical/12 text-critical',
@@ -65,7 +65,7 @@ export function TagPill({
         'group/tag inline-flex items-center gap-1 rounded-pill py-[5px] pl-[9px] text-meta transition-colors duration-150',
         onRemove ? 'pr-1.5' : 'pr-[9px]',
         active
-          ? 'bg-accent-soft text-accent-ink'
+          ? 'bg-surface-3 text-ink'
           : 'bg-surface-3 text-ink-2 hover:bg-sunken hover:text-ink',
         onClick && 'cursor-pointer',
         className,

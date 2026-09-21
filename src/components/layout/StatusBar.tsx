@@ -26,7 +26,7 @@ export function StatusBar() {
   const native = getHost().capabilities.sqlite;
 
   return (
-    <footer className="relative z-30 flex h-7 shrink-0 items-center gap-3 border-t border-line bg-surface px-3 text-2xs text-ink-3">
+    <footer className="glass relative z-30 flex h-7 shrink-0 items-center gap-3 border-t border-line px-3 text-2xs text-ink-3">
       {/* Left: what the pipeline is doing, which is the whole point of the bar. */}
       <button
         type="button"

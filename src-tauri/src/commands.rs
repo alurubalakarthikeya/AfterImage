@@ -15,10 +15,11 @@ use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::index;
 use crate::models::{
-    ActivityEntry, ArchiveCollection, ArchiveSnapshot, ArchiveTotals, FilePage, FileQuery,
-    FileRecord, Folder, IndexStatus, Project, SearchHit, SearchQuery, SearchResponse, StorageStats,
-    Tag,
+    ActivityEntry, ArchiveCollection, ArchiveSnapshot, ArchiveTotals, FileFace, FilePage, FileQuery,
+    FileRecord, Folder, IndexStatus, ModelBundle, ModelStatus, PeopleSnapshot, Person, Project,
+    SearchHit, SearchQuery, SearchResponse, StorageStats, Tag,
 };
+use crate::people;
 use crate::pipeline;
 use crate::search::Retrieval;
 use crate::service;
@@ -360,6 +361,7 @@ pub fn clear_failures(app: AppHandle, state: SharedState<'_>) -> AppResult<()> {
                 file_id: row.get(0)?,
                 path: row.get(1)?,
                 kind: row.get(2)?,
+                faces_only: false,
             })
         })?;
         let jobs: Vec<pipeline::Job> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -556,7 +558,7 @@ pub fn remove_from_collection(state: SharedState<'_>, file_id: String, collectio
 
 #[tauri::command]
 pub fn create_project(state: SharedState<'_>, name: String) -> AppResult<Project> {
-    let palette = ["#2F7773", "#7A6CC4", "#C08A64", "#5A7FC4", "#B4657C"];
+    let palette = ["#0969da", "#8250df", "#1a7f37", "#bf8700", "#cf222e"];
     let index = name.chars().count() % palette.len();
     let conn = state.db()?;
     let project = db::create_project(&conn, &name, palette[index])?;
@@ -763,6 +765,270 @@ pub fn apply_settings(state: &Arc<AppState>) {
     if let Some(llm) = llm {
         state.llm_enabled.store(llm == "true", Ordering::Relaxed);
     }
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+/// Why face grouping cannot happen right now, or `None` when it can.
+///
+/// The two answers are deliberately distinct: a service that is not running is
+/// a different problem from a service that is running without its models, and
+/// only one of them can be fixed by downloading something.
+fn faces_problem(state: &AppState) -> Option<String> {
+    if !state.service_enabled.load(Ordering::Relaxed) {
+        return Some("local processing is turned off in settings".into());
+    }
+    let port = state.service_port.load(Ordering::Relaxed);
+    match service::health(port) {
+        Some(health) => {
+            let ready = health
+                .capabilities
+                .get("faces")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if ready {
+                None
+            } else {
+                Some("the face models are not installed yet".into())
+            }
+        }
+        None => Some("the local indexing service is not running".into()),
+    }
+}
+
+/// Every group of faces, with the numbers behind them.
+#[tauri::command]
+pub async fn people_snapshot(state: SharedState<'_>) -> AppResult<PeopleSnapshot> {
+    let (groups, stats) = {
+        let conn = state.db()?;
+        // Both reads happen under the one lock, and neither calls back into
+        // `state.db()` — the same self-deadlock the snapshot command once had.
+        (people::list_people(&conn)?, people::stats(&conn)?)
+    };
+    let problem = faces_problem(state.inner());
+    Ok(PeopleSnapshot {
+        people: groups,
+        stats,
+        available: problem.is_none(),
+        reason: problem,
+    })
+}
+
+#[tauri::command]
+pub async fn person(state: SharedState<'_>, person_id: String) -> AppResult<Option<Person>> {
+    let conn = state.db()?;
+    people::person_by_id(&conn, &person_id)
+}
+
+/// Every face in one file, for the inspector.
+#[tauri::command]
+pub async fn file_faces(state: SharedState<'_>, file_id: String) -> AppResult<Vec<FileFace>> {
+    let conn = state.db()?;
+    people::faces_for_file(&conn, &file_id)
+}
+
+#[tauri::command]
+pub fn rename_person(
+    state: SharedState<'_>,
+    person_id: String,
+    label: Option<String>,
+) -> AppResult<()> {
+    let conn = state.db()?;
+    people::rename(&conn, &person_id, label.as_deref())
+}
+
+/// Fold one group into another — the correction for a wrong merge.
+#[tauri::command]
+pub fn merge_people(state: SharedState<'_>, from_id: String, into_id: String) -> AppResult<()> {
+    let conn = state.db()?;
+    people::merge(&conn, &from_id, &into_id)
+}
+
+#[tauri::command]
+pub fn set_person_hidden(
+    state: SharedState<'_>,
+    person_id: String,
+    hidden: bool,
+) -> AppResult<()> {
+    let conn = state.db()?;
+    people::set_hidden(&conn, &person_id, hidden)
+}
+
+/// Delete a group, for the faces that were never a person.
+///
+/// Answers with how many faces went with it. No photograph is touched — only
+/// the index rows and the aligned crops written beside it.
+#[tauri::command]
+pub fn forget_person(
+    app: AppHandle,
+    state: SharedState<'_>,
+    person_id: String,
+) -> AppResult<i64> {
+    let faces = {
+        let conn = state.db()?;
+        people::forget(&conn, &person_id)? as i64
+    };
+    let _ = app.emit("archive://changed", "metadata");
+    Ok(faces)
+}
+
+/// Regroup the whole library with the current threshold.
+#[tauri::command]
+pub async fn regroup_people(app: AppHandle, state: SharedState<'_>) -> AppResult<i64> {
+    let groups = {
+        let conn = state.db()?;
+        people::recluster(&conn)? as i64
+    };
+    let _ = app.emit("archive://changed", "metadata");
+    Ok(groups)
+}
+
+fn enqueue_face_jobs(app: &AppHandle, state: &Arc<AppState>) -> AppResult<i64> {
+    let jobs = {
+        let conn = state.db()?;
+        people::files_needing_faces(&conn, 20_000)?
+            .into_iter()
+            .map(|(file_id, path, kind)| pipeline::Job {
+                file_id,
+                path,
+                kind,
+                faces_only: true,
+            })
+            .collect::<Vec<_>>()
+    };
+    let count = jobs.len() as i64;
+    pipeline::enqueue(state, jobs);
+    pipeline::emit_status(app, state, "indexing");
+    Ok(count)
+}
+
+/// Look for faces in everything already indexed.
+///
+/// Answers with the number of files queued. A file whose photograph holds nobody
+/// is recorded as looked-at, so pressing this twice does not repeat the work.
+#[tauri::command]
+pub fn scan_faces(app: AppHandle, state: SharedState<'_>) -> AppResult<i64> {
+    if let Some(reason) = faces_problem(state.inner()) {
+        return Err(AppError::Other(reason));
+    }
+    enqueue_face_jobs(&app, state.inner())
+}
+
+/// What the model store holds, and what it would cost to complete it.
+#[tauri::command]
+pub async fn model_status(state: SharedState<'_>) -> AppResult<ModelStatus> {
+    let enabled = state.service_enabled.load(Ordering::Relaxed);
+    if !enabled {
+        return Ok(ModelStatus {
+            bundles: Vec::new(),
+            available: false,
+            missing_megabytes: 0.0,
+            directory: None,
+            reason: Some("local processing is turned off in settings".into()),
+        });
+    }
+
+    let port = state.service_port.load(Ordering::Relaxed);
+    let Some(value) = service::model_status(port) else {
+        return Ok(ModelStatus {
+            bundles: Vec::new(),
+            available: false,
+            missing_megabytes: 0.0,
+            directory: None,
+            reason: Some("the local indexing service is not running".into()),
+        });
+    };
+
+    let bundles = value
+        .get("bundles")
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    Some(ModelBundle {
+                        name: entry.get("name")?.as_str()?.to_string(),
+                        ready: entry.get("ready").and_then(|v| v.as_bool()).unwrap_or(false),
+                        megabytes: entry.get("megabytes").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(ModelStatus {
+        bundles,
+        available: true,
+        missing_megabytes: value
+            .get("missingMegabytes")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0),
+        directory: value
+            .get("directory")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        reason: None,
+    })
+}
+
+/// Fetch model bundles in the background.
+///
+/// Tens of megabytes over a connection nobody controls, so this returns as soon
+/// as the work is handed to a thread. A command that blocks for a minute is a
+/// window that says "Not Responding" for a minute, and the download is not worth
+/// freezing the interface over.
+#[tauri::command]
+pub fn install_models(
+    app: AppHandle,
+    state: SharedState<'_>,
+    bundles: Vec<String>,
+) -> AppResult<()> {
+    if bundles.is_empty() {
+        return Err(AppError::Other("no model bundle was named".into()));
+    }
+    let port = state.service_port.load(Ordering::Relaxed);
+    let handle = shared(&state);
+    let app_handle = app.clone();
+
+    std::thread::Builder::new()
+        .name("afterimage-models".into())
+        .spawn(move || {
+            match service::ensure_models(port, &bundles) {
+                Some(value) => {
+                    let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                    if ok {
+                        let _ = app_handle.emit(
+                            "archive://notice",
+                            "info|Models installed — looking for faces in what is already indexed",
+                        );
+                        // The point of installing them is to use them, so the
+                        // scan starts on its own rather than waiting to be asked.
+                        match enqueue_face_jobs(&app_handle, &handle) {
+                            Ok(_) => {}
+                            Err(error) => log::warn!("could not queue the face pass: {error}"),
+                        }
+                    } else {
+                        let _ = app_handle.emit(
+                            "archive://notice",
+                            "warn|Some model files could not be downloaded. Check the connection and try again.",
+                        );
+                    }
+                }
+                None => {
+                    let _ = app_handle.emit(
+                        "archive://notice",
+                        "error|The local indexing service did not answer, so nothing was downloaded.",
+                    );
+                }
+            }
+            // Settings listens for this rather than polling.
+            let _ = app_handle.emit("archive://models", "done");
+        })
+        .map_err(|error| AppError::Other(format!("could not start the download: {error}")))?;
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

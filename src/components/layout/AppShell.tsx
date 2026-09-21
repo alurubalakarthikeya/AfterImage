@@ -8,6 +8,8 @@ import { Photos } from '@/pages/Photos';
 import { Screenshots } from '@/pages/Screenshots';
 import { Documents } from '@/pages/Documents';
 import { Videos } from '@/pages/Videos';
+import { People } from '@/pages/People';
+import { PersonDetail } from '@/pages/PersonDetail';
 import { Projects } from '@/pages/Projects';
 import { Collections } from '@/pages/Collections';
 import { SearchPage } from '@/pages/SearchPage';
@@ -38,6 +40,10 @@ function RouteView({ route }: { route: RouteId }) {
       return <Documents />;
     case 'videos':
       return <Videos />;
+    case 'people':
+      return <People />;
+    case 'person':
+      return <PersonDetail />;
     case 'projects':
       return <Projects />;
     case 'collections':
@@ -76,7 +82,12 @@ export function AppShell() {
    */
   const needsSetup = status === 'ready' && folders.length === 0 && route !== 'settings';
 
-  const showInspector = inspectorOpen && roomForInspector && !needsSetup;
+  /**
+   * Settings is a full-width page. The inspector belongs to the *archive* —
+   * files, collections, folder state — and on a page of preferences it put a
+   * 320px dead column between the settings and the edge of the window.
+   */
+  const showInspector = inspectorOpen && roomForInspector && !needsSetup && route !== 'settings';
   const sidebarWidth = sidebarCollapsed ? SIDEBAR_NARROW : SIDEBAR_WIDE;
 
   const columns = showInspector
@@ -84,7 +95,10 @@ export function AppShell() {
     : `${sidebarWidth}px minmax(0, 1fr)`;
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-canvas">
+    // `af-ambient` paints two very faint colour fields under the whole window.
+    // It is not decoration: it is what the glass panels above it refract, and
+    // without it a blurred surface is just a grey rectangle.
+    <div className="af-ambient flex h-full min-h-0 flex-col bg-canvas">
       <TopBar sidebarWidth={sidebarWidth} />
 
       {/* The window's own inset: 12px against every edge, including under the

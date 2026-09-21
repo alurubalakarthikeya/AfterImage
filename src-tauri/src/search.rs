@@ -1,11 +1,13 @@
 //! Retrieval.
 //!
+//! ```text
 //!     query ─▶ parser ─▶ ┌ FTS5 over name, title, description, labels, text,
 //!                        │ folder, tags, project
 //!                        └ vector similarity (when the model is installed)
 //!                              │
 //!                              ▼
 //!                          fusion + rerank ─▶ hits
+//! ```
 //!
 //! Exact matches win where exactness is what the user means — filenames, error
 //! strings, code identifiers. Similarity only fills in when the words are not

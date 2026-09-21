@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Appearance, Density } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useSettingsStore } from '@/stores/settings';
@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Icon } from '@/components/common/Icon';
+import { usePeopleStore } from '@/stores/people';
 import { Badge } from '@/components/common/Badge';
 import { Avatar } from '@/components/common/Avatar';
 import { ProgressBar } from '@/components/common/ProgressBar';
@@ -81,7 +82,7 @@ function Toggle({
       onClick={() => onChange(!checked)}
       className={cn(
         'relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-150',
-        checked ? 'bg-accent' : 'bg-sunken',
+        checked ? 'bg-ink' : 'bg-sunken',
       )}
     >
       <span
@@ -129,8 +130,30 @@ export function Settings() {
   const rescanFolder = useArchiveStore((state) => state.rescanFolder);
   const breakdown = Object.entries(storage.byKind).sort((a, b) => b[1] - a[1]);
 
+  const people = usePeopleStore();
+  const peopleModels = people.models ?? {
+    bundles: [],
+    available: false,
+    missingMegabytes: 0,
+    reason: 'Reading the model store…',
+  };
+  const faceBundle = peopleModels.bundles.find((bundle) => bundle.name === 'faces');
+  const facesReady = faceBundle?.ready ?? false;
+  const facesCost = faceBundle ? Math.round(faceBundle.megabytes) : null;
+  const peopleStats = people.stats;
+
+  useEffect(() => {
+    void people.loadModels();
+    // The group counts belong in this page even when People has never been open.
+    if (people.status === 'idle') void people.load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <Page className="max-w-[820px]">
+    // Centred rather than pinned left: with the inspector out of the way this
+    // page owns the full width, and a fixed measure that hugs the left edge
+    // would leave one unexplained void on the right.
+    <Page className="mx-auto w-full max-w-[940px]">
       <PageHeader
         title="Settings"
         subtitle="Preferences for this machine. Nothing here syncs anywhere."
@@ -154,7 +177,7 @@ export function Settings() {
               onChange={(event) => settings.setUserName(event.target.value)}
               placeholder="Your name"
               spellCheck={false}
-              className="h-9 w-[200px] rounded-input border border-line-strong bg-surface px-3 text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-accent/50"
+              className="h-9 w-[200px] rounded-input border border-line-strong bg-surface px-3 text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-line-strong"
             />
           </div>
         </Row>
@@ -181,7 +204,7 @@ export function Settings() {
                   className={cn(
                     'inline-flex h-7 items-center gap-1.5 rounded-pill border px-2.5 text-2xs font-medium transition-colors duration-150',
                     selected
-                      ? 'border-accent/40 bg-accent-soft text-accent-ink'
+                      ? 'border-line-strong bg-surface-3 text-ink'
                       : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
                   )}
                 >
@@ -353,7 +376,7 @@ export function Settings() {
             placeholder="~/Pictures/Screenshots"
             aria-label="Folder path"
             spellCheck={false}
-            className="h-9 flex-1 rounded-input border border-line-strong bg-surface px-3 font-mono text-meta text-ink outline-none transition-colors focus:border-accent/50"
+            className="h-9 flex-1 rounded-input border border-line-strong bg-surface px-3 font-mono text-meta text-ink outline-none transition-colors focus:border-line-strong"
           />
           <Button type="submit" variant="secondary" size="sm" icon="Plus" disabled={!newFolder.trim()}>
             Add
@@ -436,6 +459,63 @@ export function Settings() {
             onChange={(event) => settings.setServicePort(Number(event.target.value))}
             className="h-9 w-[92px] rounded-input border border-line bg-surface px-2.5 text-meta tabular-nums text-ink outline-none"
           />
+        </Row>
+      </Section>
+
+      <Section
+        icon="ScanFace"
+        title="People and face grouping"
+        description="Faces are found and grouped on this machine, from your own photographs. The app never names anybody — it groups, and you decide who they are."
+      >
+        <Row
+          label="Face models"
+          hint={
+            peopleModels.available
+              ? `Where they live: ${peopleModels.directory ?? 'your app data folder'}`
+              : (peopleModels.reason ?? 'Not available yet.')
+          }
+        >
+          {facesReady ? (
+            <Badge tone="positive">Installed</Badge>
+          ) : (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="Download"
+              disabled={people.busy}
+              onClick={() => void people.installModels()}
+            >
+              Download{facesCost ? ` \u00b7 ${facesCost} MB` : ''}
+            </Button>
+          )}
+        </Row>
+        <Row
+          label="Look for faces in what is already indexed"
+          hint="Only files that have not been looked at are read, so running this twice costs nothing."
+        >
+          <Button
+            variant="secondary"
+            size="sm"
+            icon="ScanFace"
+            disabled={!facesReady || people.busy}
+            onClick={() => void people.scan()}
+          >
+            Run
+          </Button>
+        </Row>
+        <Row
+          label="Groups"
+          hint={`${peopleStats.people} people \u00b7 ${peopleStats.unnamed} still to name \u00b7 ${peopleStats.faces} faces in ${peopleStats.photos} photographs`}
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            icon="RefreshCw"
+            disabled={!facesReady || people.busy}
+            onClick={() => void people.regroup()}
+          >
+            Regroup
+          </Button>
         </Row>
       </Section>
 

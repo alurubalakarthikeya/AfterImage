@@ -57,7 +57,7 @@ function PromptDialog({
           value={value}
           onChange={(event) => setValue(event.target.value)}
           placeholder={placeholder}
-          className="mt-4 h-10 w-full rounded-input border border-line-strong bg-surface px-3 text-body text-ink outline-none transition-colors focus:border-accent/50"
+          className="mt-4 h-10 w-full rounded-input border border-line-strong bg-surface px-3 text-body text-ink outline-none transition-colors focus:border-line-strong"
         />
         {children}
         <div className="mt-5 flex justify-end gap-2">
@@ -251,7 +251,7 @@ export function FileContextMenu() {
               name="tag"
               autoFocus
               placeholder="New tag name"
-              className="h-10 flex-1 rounded-input border border-line-strong bg-surface px-3 text-body text-ink outline-none transition-colors focus:border-accent/50"
+              className="h-10 flex-1 rounded-input border border-line-strong bg-surface px-3 text-body text-ink outline-none transition-colors focus:border-line-strong"
             />
             <Button type="submit" variant="primary" size="sm" icon="Plus">
               Add

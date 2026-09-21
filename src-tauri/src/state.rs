@@ -22,6 +22,13 @@ use crate::pipeline::Job;
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub thumbnail_dir: PathBuf,
+    /// Face crops, inside the thumbnail directory rather than beside it.
+    ///
+    /// Tauri's asset protocol is scoped to exactly one path, and that scope is
+    /// a security boundary: every directory added to it is another place the
+    /// webview can read from. A subdirectory costs nothing and keeps the
+    /// boundary at one entry.
+    pub faces_dir: PathBuf,
 
     /// Local Python indexer port (FastAPI on loopback only).
     pub service_port: AtomicU16,
@@ -33,6 +40,10 @@ pub struct AppState {
     /// the user asks for it, which is why it is a separate switch from the two
     /// above: it costs a round trip per search, not per file.
     pub llm_enabled: AtomicBool,
+    /// Whether photographs should be scanned for faces. On by default: when no
+    /// face model is installed every call answers "unavailable" in a few
+    /// milliseconds and the file is left on the list for when one is.
+    pub faces_enabled: AtomicBool,
 
     // Queue counters, mirrored into `IndexStatus` on every change.
     pub queue_total: AtomicI64,
@@ -60,13 +71,16 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: Connection, app_data: PathBuf) -> Self {
         let thumbnail_dir = app_data.join("thumbnails");
+        let faces_dir = thumbnail_dir.join("faces");
         Self {
             db: Mutex::new(db),
             thumbnail_dir,
+            faces_dir,
             service_port: AtomicU16::new(8765),
             service_enabled: AtomicBool::new(true),
             semantic_enabled: AtomicBool::new(false),
             llm_enabled: AtomicBool::new(false),
+            faces_enabled: AtomicBool::new(true),
             queue_total: AtomicI64::new(0),
             pending: AtomicI64::new(0),
             processing: AtomicI64::new(0),

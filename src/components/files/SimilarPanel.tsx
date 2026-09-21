@@ -34,7 +34,7 @@ export function SimilarPanel() {
     >
       <div className="flex flex-col">
         <div className="flex items-center gap-3 border-b border-line px-4 py-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-accent-softer text-accent-ink">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-surface-2 text-accent-ink">
             <Icon name="Layers" size={15} strokeWidth={1.9} />
           </span>
           <div className="min-w-0 flex-1">

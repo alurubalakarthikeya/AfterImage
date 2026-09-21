@@ -136,7 +136,7 @@ export function TitleBar({
   return (
     <header
       className={cn(
-        'relative z-40 flex h-12 shrink-0 items-stretch border-b border-line bg-surface',
+        'glass relative z-40 flex h-12 shrink-0 items-stretch border-b border-line',
         className,
       )}
     >

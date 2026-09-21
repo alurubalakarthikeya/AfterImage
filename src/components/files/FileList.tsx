@@ -43,7 +43,7 @@ const FileRow = memo(function FileRow({
       }}
       className={cn(
         'grid items-center gap-3 border-b border-line px-3 py-2 transition-colors duration-100 last:border-b-0',
-        selected ? 'bg-accent-softer' : 'hover:bg-surface-2',
+        selected ? 'bg-surface-2' : 'hover:bg-surface-2',
       )}
       style={{ gridTemplateColumns: GRID_COLUMNS }}
     >

@@ -246,6 +246,149 @@ pub fn similar(port: u16, file_id: &str, limit: i64) -> Option<Vec<(String, f64)
     )
 }
 
+// ---------------------------------------------------------------------------
+// Faces
+// ---------------------------------------------------------------------------
+
+/// One face, as the indexer found it.
+pub struct DetectedFace {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+    pub score: f64,
+    pub quality: f64,
+    pub embedding: Vec<f32>,
+    pub crop_path: Option<String>,
+}
+
+/// The three honest answers to "who is in this photograph?".
+///
+/// `Empty` means the detector ran and found nobody — a result worth recording,
+/// because it stops the file from being looked at again. `Unavailable` means no
+/// model is installed, so nothing was decided and the file stays on the list for
+/// whenever one is.
+pub enum FaceOutcome {
+    Faces(Vec<DetectedFace>),
+    Empty,
+    Unavailable { reason: String },
+}
+
+/// Detect and embed every face in one image.
+pub fn detect_faces(
+    port: u16,
+    path: &str,
+    kind: &str,
+    file_id: &str,
+    faces_dir: &str,
+) -> FaceOutcome {
+    let response = ureq::post(&format!("{}/index/faces", base(port)))
+        .timeout(LONG)
+        .send_json(json!({
+            "path": path,
+            "kind": kind,
+            "fileId": file_id,
+            "faces_dir": faces_dir,
+        }));
+
+    let value: serde_json::Value = match response {
+        Ok(response) => match response.into_json() {
+            Ok(value) => value,
+            Err(error) => {
+                return FaceOutcome::Unavailable {
+                    reason: format!("the face detector sent back something unexpected: {error}"),
+                }
+            }
+        },
+        Err(error) => {
+            return FaceOutcome::Unavailable {
+                reason: format!("the local face detector is not answering: {error}"),
+            }
+        }
+    };
+
+    if !value
+        .get("available")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        return FaceOutcome::Unavailable {
+            reason: value
+                .get("reason")
+                .and_then(|value| value.as_str())
+                .unwrap_or("the face models are not installed")
+                .to_string(),
+        };
+    }
+
+    let faces: Vec<DetectedFace> = value
+        .get("faces")
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let embedding = entry
+                        .get("embedding")
+                        .and_then(|value| value.as_array())?
+                        .iter()
+                        .filter_map(|value| value.as_f64())
+                        .map(|value| value as f32)
+                        .collect::<Vec<f32>>();
+                    if embedding.is_empty() {
+                        return None;
+                    }
+                    let box_value = entry.get("box")?;
+                    let number = |key: &str| {
+                        box_value.get(key).and_then(|value| value.as_f64()).unwrap_or(0.0)
+                    };
+                    Some(DetectedFace {
+                        left: number("x"),
+                        top: number("y"),
+                        width: number("width"),
+                        height: number("height"),
+                        score: entry.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        quality: entry.get("quality").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                        embedding,
+                        crop_path: entry
+                            .get("cropPath")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if faces.is_empty() {
+        FaceOutcome::Empty
+    } else {
+        FaceOutcome::Faces(faces)
+    }
+}
+
+/// Fetch the named model bundles. Slow on purpose — this is a download.
+pub fn ensure_models(port: u16, bundles: &[String]) -> Option<serde_json::Value> {
+    let response = ureq::post(&format!("{}/models/ensure", base(port)))
+        .timeout(Duration::from_secs(900))
+        .send_json(json!({ "bundles": bundles }))
+        .ok()?;
+    response.into_json::<serde_json::Value>().ok()
+}
+
+/// What is installed, straight from the service's own model store.
+pub fn model_status(port: u16) -> Option<serde_json::Value> {
+    let response = ureq::get(&format!("{}/models", base(port)))
+        .timeout(SHORT)
+        .call()
+        .ok()?;
+    response.into_json::<serde_json::Value>().ok()
+}
+
+// ---------------------------------------------------------------------------
+// Query parsing
+// ---------------------------------------------------------------------------
+
 /// A parsed interpretation from the optional local model.
 pub struct ModelQuery {
     pub terms: Vec<String>,

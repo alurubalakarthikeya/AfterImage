@@ -42,10 +42,14 @@ export interface UIState {
   contextMenu: ContextMenuState | null;
   activeCollectionId: string | null;
   activeProjectId: string | null;
+  /** Person whose route is on screen. Only meaningful on the `person` route. */
+  activePersonId: string | null;
   /** File whose "find similar" results should be shown in the inspector. */
   similarFor: string | null;
 
   navigate: (route: RouteId) => void;
+  /** Opens one person's photos. Sets the route, so callers pass only an id. */
+  openPerson: (personId: string) => void;
   selectFile: (
     fileId: string,
     options?: { additive?: boolean; open?: boolean; range?: boolean; rangeOrder?: string[] },
@@ -93,13 +97,31 @@ export const useUIStore = create<UIState>()((set, get) => ({
   contextMenu: null,
   activeCollectionId: null,
   activeProjectId: null,
+  activePersonId: null,
   similarFor: null,
 
   navigate: (route) => {
     const current = get().route;
     if (current === route) return;
-    set({ route, previousRoute: current, contextMenu: null });
+    set({
+      route,
+      previousRoute: current,
+      contextMenu: null,
+      // The id only means anything alongside its own route, so leaving forgets
+      // it rather than leaving a stale person for the next visit to pick up.
+      ...(route === 'person' ? {} : { activePersonId: null }),
+    });
   },
+
+  openPerson: (personId) =>
+    set((state) => ({
+      route: 'person',
+      previousRoute: state.route === 'person' ? state.previousRoute : state.route,
+      activePersonId: personId,
+      contextMenu: null,
+      selectedFileId: null,
+      selectedFileIds: [],
+    })),
 
   selectFile: (fileId, options) =>
     set((state) => {

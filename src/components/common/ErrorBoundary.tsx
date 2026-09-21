@@ -64,7 +64,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <button
               type="button"
               onClick={this.reset}
-              className="inline-flex h-8 items-center gap-2 rounded-btn bg-accent-strong px-3 text-meta font-medium text-white transition-colors duration-150 hover:bg-accent"
+              className="inline-flex h-8 items-center gap-2 rounded-btn bg-ink px-3 text-meta font-medium text-canvas transition-colors duration-150 hover:bg-ink-2"
             >
               <Icon name="RefreshCw" size={13} strokeWidth={2.2} />
               Reload this panel

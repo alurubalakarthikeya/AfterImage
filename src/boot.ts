@@ -48,7 +48,7 @@ report('boot: bundle evaluated');
 const PANEL =
   'position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;' +
   'justify-content:center;gap:10px;padding:32px;text-align:center;' +
-  'font:400 13px/1.6 ui-sans-serif,system-ui,sans-serif;background:#f4f7f6;color:#1d2a28';
+  'font:400 13px/1.6 ui-sans-serif,system-ui,sans-serif;background:#f6f8fa;color:#1f2328';
 
 /** Replace an empty shell with a sentence a person can act on. */
 function surface(reason: string): void {

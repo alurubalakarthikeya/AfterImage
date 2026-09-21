@@ -4,8 +4,12 @@ import type {
   ArchiveFile,
   ArchiveFolder,
   ArchiveTotals,
+  FileFace,
   FileKind,
   IndexStatus,
+  ModelStatus,
+  PeopleSnapshot,
+  Person,
   Project,
   SearchQuery,
   SearchResponse,
@@ -162,10 +166,39 @@ export function createDevelopmentHost(): ArchiveHost {
     updatePreferences: async (): Promise<void> => undefined,
 
     removeFolder: () => refuse('Removing a folder'),
+    forgetPerson: () => refuse('Deleting a person'),
     rescanFolder: () => refuse('Scanning'),
     pauseIndexing: () => refuse('Pausing the indexer'),
     resumeIndexing: () => refuse('Resuming the indexer'),
     clearFailures: () => refuse('Clearing failures'),
+
+    // ---- people --------------------------------------------------------- //
+    // The browser has no filesystem, so there are no photographs to look at and
+    // no faces to find. Reporting an empty, unavailable archive is the honest
+    // answer; the page then explains what the desktop build adds.
+    people: async (): Promise<PeopleSnapshot> => ({
+      people: [],
+      stats: { people: 0, faces: 0, unnamed: 0, photos: 0 },
+      available: false,
+      reason: 'Face grouping needs the desktop build, where the models run on your own photographs.',
+    }),
+
+    person: async (): Promise<Person | null> => null,
+    fileFaces: async (): Promise<FileFace[]> => [],
+    renamePerson: () => refuse('Naming people'),
+    mergePeople: () => refuse('Merging people'),
+    setPersonHidden: () => refuse('Hiding people'),
+    regroupPeople: () => refuse('Regrouping faces'),
+    scanFaces: () => refuse('Looking for faces'),
+
+    modelStatus: async (): Promise<ModelStatus> => ({
+      bundles: [],
+      available: false,
+      missingMegabytes: 0,
+      reason: 'The model store lives in the desktop build.',
+    }),
+
+    installModels: () => refuse('Downloading models'),
 
     search: async (query: SearchQuery): Promise<SearchResponse> => ({
       hits: [],

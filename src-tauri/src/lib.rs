@@ -16,6 +16,7 @@ mod db;
 mod error;
 mod index;
 mod models;
+mod people;
 mod pipeline;
 mod scan;
 mod search;
@@ -178,6 +179,17 @@ pub fn run() {
             commands::reveal_path,
             commands::trash_files,
             commands::rename_file,
+            commands::people_snapshot,
+            commands::person,
+            commands::file_faces,
+            commands::rename_person,
+            commands::forget_person,
+            commands::merge_people,
+            commands::set_person_hidden,
+            commands::regroup_people,
+            commands::scan_faces,
+            commands::model_status,
+            commands::install_models,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

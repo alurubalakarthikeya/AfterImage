@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { RouteId } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useCollectionStore } from '@/stores/collections';
+import { usePeopleStore } from '@/stores/people';
 import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
 import { cn, formatStorage } from '@/utils/format';
@@ -49,7 +50,7 @@ function Row({
         'group/row flex h-10 w-full items-center rounded-[10px] transition-[background-color,color] duration-150',
         collapsed ? 'justify-center px-0' : 'gap-2.5 px-3',
         active
-          ? 'bg-accent-soft text-accent-ink'
+          ? 'bg-surface-3 text-ink'
           : cn('text-ink-2 hover:bg-surface-3 hover:text-ink', dim && 'text-ink-3'),
       )}
     >
@@ -88,6 +89,7 @@ export function Sidebar() {
   const pushNotice = useUIStore((state) => state.pushNotice);
 
   const totals = useArchiveStore((state) => state.totals);
+  const peopleCount = usePeopleStore((state) => state.stats.people);
   const storage = useArchiveStore((state) => state.storage);
   const collections = useArchiveStore((state) => state.collections);
 
@@ -115,6 +117,7 @@ export function Sidebar() {
     { id: 'screenshots', label: 'Screenshots', icon: 'MonitorSmartphone', count: totals.byKind.screenshot },
     { id: 'documents', label: 'Documents', icon: 'FileText', count: totals.byKind.document },
     { id: 'videos', label: 'Videos', icon: 'Film', count: totals.byKind.video },
+    { id: 'people', label: 'People', icon: 'Users', count: peopleCount },
   ];
 
   // Collections created this session float to the top; the rest keep the
@@ -134,7 +137,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'flex min-h-0 flex-col',
+        'glass flex min-h-0 flex-col rounded-panel border border-line p-2',
         collapsed ? 'gap-2' : 'gap-1',
       )}
       aria-label="Primary"
@@ -166,7 +169,9 @@ export function Sidebar() {
             label={item.label}
             count={item.id === 'home' ? undefined : item.count}
             collapsed={collapsed}
-            active={route === item.id}
+            // One person's page is still the People section, so the row stays lit
+            // while the user is inside a group.
+            active={route === item.id || (item.id === 'people' && route === 'person')}
             onClick={() => navigate(item.id)}
           />
         ))}

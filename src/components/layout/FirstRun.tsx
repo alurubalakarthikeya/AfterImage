@@ -89,7 +89,7 @@ export function FirstRun() {
               placeholder="…or paste an absolute path"
               aria-label="Folder path"
               spellCheck={false}
-              className="h-10 min-w-0 flex-1 rounded-input border border-line-strong bg-surface px-3 font-mono text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-accent/50"
+              className="h-10 min-w-0 flex-1 rounded-input border border-line-strong bg-surface px-3 font-mono text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-line-strong"
             />
             <Button
               type="submit"

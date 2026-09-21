@@ -22,15 +22,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import describe as describe_module
-from . import embed, llm, ocr
-from .capabilities import detect
+from . import embed, faces, llm, models, ocr
+from .capabilities import detect, refresh
 from .config import SERVICE_VERSION, get_settings
 from .extract import extract_pdf, extract_text_file
 from .schemas import (
     DescribeResponse,
+    DetectedFaceOut,
     EmbedResponse,
+    FaceBox,
+    FacesRequest,
+    FacesResponse,
     HealthResponse,
     IndexRequest,
+    ModelBundleOut,
+    ModelEnsureRequest,
+    ModelStatusResponse,
     OcrResponse,
     ParsedQuery,
     QueryRequest,
@@ -356,6 +363,109 @@ def query_parse(request: QueryRequest) -> ParsedQuery:
         interpreted=parsed.get("interpreted"),  # type: ignore[arg-type]
         source="model" if parsed.get("source") == "model" else "rules",
     )
+
+
+# --------------------------------------------------------------------------- #
+# Faces
+# --------------------------------------------------------------------------- #
+
+
+def _bundle_costs() -> list[ModelBundleOut]:
+    return [
+        ModelBundleOut(
+            name=name,
+            ready=models.bundle_ready(name),
+            megabytes=round(sum(model.megabytes for model in bundle), 1),
+        )
+        for name, bundle in models.BUNDLES.items()
+    ]
+
+
+@app.post("/index/faces", response_model=FacesResponse)
+def index_faces(request: FacesRequest) -> FacesResponse:
+    """Find the faces in one image, and write a crop for each.
+
+    The 128-dimensional vectors are returned rather than grouped. Grouping needs
+    every face in the library at once and has to be written in the same
+    transaction as the row it belongs to, so it lives with the database, in the
+    desktop shell — see ``src-tauri/src/people.rs``.
+    """
+    if request.kind not in {"photo", "screenshot", "design"}:
+        return FacesResponse(
+            fileId=request.file_id,
+            available=faces.available(),
+            reason="this kind of file has no faces to find",
+        )
+    if not faces.available():
+        return FacesResponse(
+            fileId=request.file_id,
+            available=False,
+            reason="the face models are not installed on this machine",
+        )
+
+    target = _require_file(request.path)
+    found = faces.detect(
+        str(target),
+        faces_dir=request.faces_dir,
+        file_id=request.file_id or target.stem,
+    )
+
+    return FacesResponse(
+        fileId=request.file_id,
+        available=True,
+        engine="yunet+sface",
+        faces=[
+            DetectedFaceOut(
+                box=FaceBox(
+                    x=round(face.box[0], 2),
+                    y=round(face.box[1], 2),
+                    width=round(face.box[2], 2),
+                    height=round(face.box[3], 2),
+                ),
+                score=round(face.score, 4),
+                quality=round(face.quality, 4),
+                embedding=face.embedding,
+                cropPath=face.crop_path,
+            )
+            for face in found
+        ],
+    )
+
+
+@app.get("/models", response_model=ModelStatusResponse)
+def models_status() -> ModelStatusResponse:
+    """What is installed, and what it would cost to install the rest."""
+    state = models.status()
+    return ModelStatusResponse(
+        available=True,
+        bundles=_bundle_costs(),
+        missingMegabytes=float(state.get("missingMegabytes") or 0.0),
+        directory=str(state.get("directory") or "") or None,
+    )
+
+
+@app.post("/models/ensure")
+def models_ensure(request: ModelEnsureRequest) -> dict[str, object]:
+    """Fetch the named bundles.
+
+    Downloads are large and slow by nature — 37 MB for the face bundle — so the
+    desktop shell calls this on a background thread rather than in a request the
+    interface is waiting on.
+    """
+    wanted = [model for name in request.bundles for model in models.BUNDLES.get(name, ())]
+    if not wanted:
+        raise HTTPException(status_code=400, detail="no known model bundle was named")
+
+    outcome = models.ensure(tuple(wanted))
+    capabilities = refresh()
+
+    return {
+        "ok": all(outcome.values()),
+        "fetched": outcome,
+        "bundles": [bundle.model_dump() for bundle in _bundle_costs()],
+        "missingMegabytes": models.status()["missingMegabytes"],
+        "capabilities": capabilities.as_dict(),
+    }
 
 
 @app.post("/index/reset")

@@ -259,7 +259,7 @@ export function CommandPalette() {
       <Scrim onClick={close} />
       <div className="pointer-events-none fixed inset-0 z-50 flex justify-center px-6 pt-[10vh]">
         <div
-          className="pointer-events-auto flex max-h-[560px] w-full max-w-[620px] flex-col overflow-hidden rounded-card-lg border border-line bg-surface"
+          className="glass-float pointer-events-auto flex max-h-[560px] w-full max-w-[620px] flex-col overflow-hidden rounded-card-lg border border-line"
           style={{ boxShadow: 'var(--af-shadow-float)' }}
           role="dialog"
           aria-modal="true"

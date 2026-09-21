@@ -48,13 +48,13 @@ export function TagEditor({ file }: { file: ArchiveFile }) {
             if (event.key === 'Escape') setEditing(false);
           }}
           placeholder="tag name"
-          className="h-[26px] w-[104px] rounded-pill border border-line-strong bg-surface px-2.5 text-meta text-ink outline-none focus:border-accent/50"
+          className="h-[26px] w-[104px] rounded-pill border border-line-strong bg-surface px-2.5 text-meta text-ink outline-none focus:border-line-strong"
         />
       ) : (
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="inline-flex items-center gap-1 rounded-pill border border-dashed border-line-strong py-[5px] pl-2 pr-2.5 text-meta text-ink-3 transition-colors duration-150 hover:border-accent/40 hover:text-accent-ink"
+          className="inline-flex items-center gap-1 rounded-pill border border-dashed border-line-strong py-[5px] pl-2 pr-2.5 text-meta text-ink-3 transition-colors duration-150 hover:border-line-strong hover:text-accent-ink"
         >
           <Icon name="Plus" size={11} strokeWidth={2.4} />
           Add tag
