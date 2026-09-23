@@ -8,7 +8,7 @@ import { getHost } from '@/services/host';
 import { Icon } from '@/components/common/Icon';
 import { Button } from '@/components/common/Button';
 import { Avatar } from '@/components/common/Avatar';
-import { LogoMark } from '@/components/common/Logo';
+import { Logo } from '@/components/common/Logo';
 import { TitleBar } from '@/components/layout/TitleBar';
 import { ThemeControl } from '@/components/layout/ThemeControl';
 
@@ -140,11 +140,8 @@ export function Onboarding() {
           window like any other: same chrome, same controls, same theme switch. */}
       <TitleBar
         left={
-          <div data-tauri-drag-region className="flex shrink-0 items-center gap-2.5 pl-6 pr-4">
-            <LogoMark size={21} />
-            <span className="text-body font-semibold tracking-[-0.015em] text-ink">
-              AfterImage
-            </span>
+          <div data-tauri-drag-region className="flex shrink-0 items-center pl-6 pr-4">
+            <Logo compact size="sm" />
           </div>
         }
         right={

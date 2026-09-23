@@ -102,6 +102,9 @@ class SemanticSearchResponse(BaseModel):
 
 class QueryRequest(BaseModel):
     text: str
+    # The model the user chose, when they chose one. `None` means "whatever this
+    # service was configured with", which is what an older desktop shell sends.
+    model: str | None = None
 
 
 class ParsedQuery(BaseModel):

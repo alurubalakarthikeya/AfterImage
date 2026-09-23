@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { ArchiveFile } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useCollectionStore } from '@/stores/collections';
@@ -13,8 +13,10 @@ import { Button } from '@/components/common/Button';
 import { ProgressBar } from '@/components/common/ProgressBar';
 import { PromoCard } from '@/components/dashboard/PromoCard';
 import { ActivityTimeline } from '@/components/dashboard/ActivityTimeline';
+import { PromptDialog } from '@/components/common/PromptDialog';
 import { FilePreview } from '@/components/files/FilePreview';
 import { FileMetadata } from '@/components/files/FileMetadata';
+import { ImageDna } from '@/components/files/ImageDna';
 import { TagEditor } from '@/components/files/TagEditor';
 import { ExtractedText } from '@/components/files/ExtractedText';
 import { RelatedFiles } from '@/components/files/RelatedFiles';
@@ -125,6 +127,76 @@ function IdleInspector() {
   );
 }
 
+/**
+ * Which collections one file belongs to.
+ *
+ * Membership is a row of toggles rather than a picker, because a file belongs
+ * to as many collections as the user likes and the answer to "is this in that
+ * one" should be visible without opening anything. The new-collection field is
+ * here too: "this picture, in a new collection" is one gesture.
+ */
+function CollectionMembership({ file }: { file: ArchiveFile }) {
+  const collections = useArchiveStore((state) => state.collections);
+  const createCollection = useArchiveStore((state) => state.createCollection);
+  const toggleFile = useCollectionStore((state) => state.toggleFile);
+  const [creating, setCreating] = useState(false);
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-1.5">
+        {collections.slice(0, 10).map((collection) => {
+          const attached = file.collectionIds.includes(collection.id);
+          return (
+            <button
+              key={collection.id}
+              type="button"
+              aria-pressed={attached}
+              onClick={() => void toggleFile(file.id, collection.id)}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 text-2xs transition-colors duration-150',
+                attached
+                  ? 'bg-surface-3 text-ink'
+                  : 'bg-surface-2 text-ink-2 hover:bg-surface-3 hover:text-ink',
+              )}
+            >
+              <Icon name={attached ? 'Check' : collection.icon} size={11} strokeWidth={2.1} />
+              {collection.name}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          className="inline-flex items-center gap-1.5 rounded-pill bg-surface-2 px-2.5 py-1 text-2xs text-ink-2 transition-colors duration-150 hover:bg-surface-3 hover:text-ink"
+        >
+          <Icon name="Plus" size={11} strokeWidth={2.2} />
+          New
+        </button>
+      </div>
+
+      {collections.length === 0 && (
+        <p className="mt-2 text-2xs leading-relaxed text-ink-3">
+          No collections yet. A collection is a view over the archive — the file itself never moves.
+        </p>
+      )}
+
+      <PromptDialog
+        open={creating}
+        title="New collection"
+        description={`${file.name} is added to it as soon as it exists.`}
+        placeholder="Collection name"
+        confirmLabel="Create"
+        onConfirm={(name) => {
+          void createCollection(name).then((created) => {
+            if (created) void toggleFile(file.id, created.id);
+          });
+        }}
+        onClose={() => setCreating(false)}
+      />
+    </>
+  );
+}
+
 function MultiSelection({ files }: { files: ArchiveFile[] }) {
   const deleteFiles = useArchiveStore((state) => state.deleteFiles);
   const toggleFavorite = useArchiveStore((state) => state.toggleFavorite);
@@ -231,12 +303,20 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
   const setProject = useArchiveStore((state) => state.setProject);
   const setQuickLookOpen = useUIStore((state) => state.setQuickLookOpen);
   const setSimilarFor = useUIStore((state) => state.setSimilarFor);
+  const setComparisonFor = useUIStore((state) => state.setComparisonFor);
   const clearSelection = useUIStore((state) => state.clearSelection);
 
   const project = projects.find((item) => item.id === file.projectId) ?? null;
   const canFindSimilar =
     (file.kind === 'photo' || file.kind === 'screenshot' || file.kind === 'design') &&
     file.embeddingState === 'indexed';
+  // DNA is measured from pixels, so it needs a picture: an image, or the frame
+  // the pipeline wrote for a video. A document has dimensions the same way a
+  // page has a size, and neither tells the user anything about a photograph.
+  const hasPixels = Boolean(file.width && file.height);
+  // Comparison needs a presentation copy; there is nothing to put beside a
+  // picture the pipeline never wrote one for.
+  const canCompare = Boolean(file.previewPath) && hasPixels;
 
   return (
     <>
@@ -307,6 +387,18 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
               <Icon name="Eye" size={16} strokeWidth={1.9} />
             </IconButton>
           </Tooltip>
+          {canCompare && (
+            <Tooltip label="Compare before and after" side="top">
+              <IconButton
+                size="md"
+                variant="soft"
+                label="Compare versions"
+                onClick={() => setComparisonFor(file.id)}
+              >
+                <Icon name="Columns2" size={16} strokeWidth={1.9} />
+              </IconButton>
+            </Tooltip>
+          )}
           {/* Visual search only means something for a picture, and only once the
               local embedder has seen it. Otherwise the button stays out of the
               way rather than opening an empty panel. */}
@@ -333,8 +425,30 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
           <FileMetadata file={file} />
         </Section>
 
+        {hasPixels && (
+          <Section
+            title="Image DNA"
+            action={<span className="text-2xs text-ink-3">On device</span>}
+          >
+            <ImageDna file={file} />
+          </Section>
+        )}
+
         <Section title="Tags">
           <TagEditor file={file} />
+        </Section>
+
+        <Section
+          title="Collections"
+          action={
+            file.collectionIds.length > 0 ? (
+              <span className="text-2xs text-ink-3">
+                In {file.collectionIds.length}
+              </span>
+            ) : undefined
+          }
+        >
+          <CollectionMembership file={file} />
         </Section>
 
         <Section

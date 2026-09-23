@@ -108,6 +108,132 @@ export interface Tag {
   pinned?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Image DNA
+// ---------------------------------------------------------------------------
+
+/** One colour that actually covers part of a picture. */
+export interface DnaColor {
+  hex: string;
+  red: number;
+  green: number;
+  blue: number;
+  /** Share of the analysed pixels this colour accounts for, 0..1. */
+  share: number;
+}
+
+/**
+ * What this machine can say about one picture.
+ *
+ * The first group is what the scan read from the file; the second is what was
+ * measured in the pixels on demand. A field that could not be determined is
+ * absent, and the view omits the row rather than printing a plausible number.
+ */
+export interface ImageDna {
+  fileId: string;
+  width?: number;
+  height?: number;
+  /** Width ÷ height, to two decimals. */
+  aspect?: number;
+  orientation?: 'landscape' | 'portrait' | 'square';
+  format: string;
+  bytes: number;
+  createdAt: string;
+  modifiedAt: string;
+  /** False when the pixels could not be read here. */
+  decoded: boolean;
+  /** Why the pixels are missing, or which picture they came from. */
+  reason?: string;
+  palette: DnaColor[];
+  /** Mean luma, 0..1. */
+  brightness?: number;
+  /** Standard deviation of luma, 0..1. */
+  contrast?: number;
+  /** Edge energy, normalised 0..1. */
+  sharpness?: number;
+  /** Mean chroma, 0..1. */
+  saturation?: number;
+  temperature?: 'warm' | 'neutral' | 'cool';
+  /** Red minus blue, -1..1. */
+  temperatureShift?: number;
+  /** Labels the local vision model put on the picture; empty without one. */
+  objects: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Kept versions
+// ---------------------------------------------------------------------------
+
+/**
+ * One kept copy of a picture, for before/after comparison.
+ *
+ * A version is the archive's own presentation copy, taken the moment the
+ * pipeline notices the file on disk has changed — not a second copy of the
+ * original photograph.
+ */
+export interface FileVersion {
+  id: string;
+  fileId: string;
+  /** Absolute path inside the thumbnail directory, which is what the viewer may load. */
+  path: string;
+  bytes: number;
+  width?: number;
+  height?: number;
+  /** When the copy was taken. */
+  capturedAt: string;
+  /** The modification time of the content this copy shows. */
+  contentAt: string;
+  /** `change` (the file changed on disk) or `manual`. */
+  source: 'change' | 'manual';
+}
+
+/**
+ * Filing the archive's own structure onto the disk.
+ *
+ * The plan is what makes this safe to offer: it says, file by file, where a
+ * picture is now and where it would go, before anything moves. Skipped entries
+ * carry the reason they are being left alone, which is always more useful than
+ * a count.
+ */
+export interface OrganizeMove {
+  fileId: string;
+  name: string;
+  from: string;
+  to: string;
+  kind: FileKind;
+  /** The folder inside the kind folder: a collection, a person, or `Unfiled`. */
+  group: string;
+  /** How many collections the file is in, when more than the one chosen. */
+  collections: number;
+  bytes: number;
+}
+
+export interface OrganizeSkip {
+  fileId: string;
+  name: string;
+  from: string;
+  reason: string;
+}
+
+export interface OrganizePlan {
+  root: string;
+  moves: OrganizeMove[];
+  skipped: OrganizeSkip[];
+  /** Files already exactly where the plan would put them. */
+  settled: number;
+  /** Folders that will be created, relative to the destination. */
+  folders: string[];
+  totalBytes: number;
+}
+
+export interface OrganizeReport {
+  moved: number;
+  skipped: OrganizeSkip[];
+  failed: OrganizeSkip[];
+  folders: string[];
+  plan: OrganizePlan;
+}
+
 export interface ArchiveCollection {
   id: string;
   name: string;
@@ -330,6 +456,33 @@ export interface ModelStatus {
   missingMegabytes: number;
   directory?: string;
   reason?: string;
+  /**
+   * True when an indexer exists on this machine but is not running yet — the
+   * difference between something to start and something to install.
+   */
+  canStart: boolean;
+  /** True while this machine is drawing from its battery. */
+  onBattery: boolean;
+}
+
+/**
+ * Which build is installed, read from the running binary.
+ *
+ * Two installers of AfterImage look identical in the window, so the only way to
+ * answer "did my new build install?" is to have the application describe itself.
+ */
+export interface BuildInfo {
+  version: string;
+  /** When the executable was written, i.e. when this build was made. */
+  builtAt?: string;
+  executable?: string;
+  dataDir: string;
+  thumbnailsDir: string;
+  database: string;
+  /** True when the installer carried its own indexer rather than relying on a
+   * Python environment that happens to be on this machine. */
+  bundledIndexer: boolean;
+  onBattery: boolean;
 }
 
 export type ViewMode = 'grid' | 'list' | 'timeline';

@@ -93,7 +93,7 @@ export function TagPill({
             event.stopPropagation();
             onRemove();
           }}
-          className="inline-flex h-4 w-4 items-center justify-center rounded-full text-ink-3 transition-colors duration-150 hover:bg-black/8 hover:text-ink"
+          className="inline-flex h-4 w-4 items-center justify-center rounded-full text-ink-3 transition-colors duration-150 hover:bg-ink/8 hover:text-ink"
         >
           <Icon name="X" size={10} strokeWidth={2.6} />
         </button>

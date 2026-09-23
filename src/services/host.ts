@@ -4,10 +4,15 @@ import type {
   ArchiveFile,
   ArchiveFolder,
   ArchiveTotals,
+  BuildInfo,
   FileFace,
   FileKind,
+  FileVersion,
+  ImageDna,
   IndexStatus,
   ModelStatus,
+  OrganizePlan,
+  OrganizeReport,
   PeopleSnapshot,
   Person,
   Project,
@@ -32,7 +37,7 @@ import type {
  * one that shows an empty state.
  */
 
-export type HostName = 'tauri' | 'development';
+export type HostName = 'tauri' | 'web' | 'development';
 
 /** What this host can actually do. The UI adapts rather than guessing. */
 export interface HostCapabilities {
@@ -99,7 +104,16 @@ export interface ArchiveSnapshot {
 export interface HostPreferences {
   semanticSearch?: boolean;
   servicePort?: number;
+  /** The master switch for OCR, labels, embeddings and faces. */
   localProcessing?: boolean;
+  /** Whether a change on disk is enough to start indexing on its own. */
+  autoIndex?: boolean;
+  /** Whether the queue may run while the machine is on battery power. */
+  indexOnBattery?: boolean;
+  /** Let the local model interpret search queries. */
+  llmEnabled?: boolean;
+  /** Which local model to use, when one is enabled. */
+  llmModel?: string;
 }
 
 export type HostEvent =
@@ -188,6 +202,64 @@ export interface ArchiveHost {
   modelStatus(): Promise<ModelStatus>;
   /** Fetch model bundles. Returns once the download is under way. */
   installModels(bundles: string[]): Promise<void>;
+  /**
+   * Start the local indexing service now.
+   *
+   * It is started in the background at launch, but that can lose a race on a
+   * slow machine — and a person looking at "not running" deserves a button.
+   * Resolves with what happened; rejects with the reason it could not start.
+   */
+  startService(): Promise<string>;
+
+  // ---- the build -------------------------------------------------------- //
+  /** Which build this is, and where it keeps its files. */
+  buildInfo(): Promise<BuildInfo>;
+
+  /**
+   * Let the webview read one original file, returning its path.
+   *
+   * Photographs are served from the pipeline's previews; a video has to be
+   * streamed and a PDF has to be laid out, and only the original will do. Access
+   * is granted for that one file, for that one reason.
+   */
+  grantFileAccess(fileId: string): Promise<string>;
+
+  // ---- image dna -------------------------------------------------------- //
+  /**
+   * What this machine can say about one picture: its own facts, plus the
+   * palette, tone and detail measured from its pixels locally. Measured on
+   * demand and cached in the backend, so opening the inspector twice costs one
+   * decode.
+   */
+  imageDna(fileId: string): Promise<ImageDna>;
+
+  // ---- organizing ------------------------------------------------------- //
+  /**
+   * Ask for the folder the archive should file everything into.
+   *
+   * Not `addFolder`: the answer is a destination rather than an indexed folder,
+   * and registering it is something the organizer does when it writes into it.
+   */
+  pickOrganizeDestination(): Promise<string | null>;
+  /**
+   * Where every indexed file would go if the archive filed the disk its own way.
+   *
+   * Read-only, and the only thing the interface needs before it offers to move
+   * anything: a move writes to the user's own folders.
+   */
+  organizePlan(destination: string): Promise<OrganizePlan>;
+  /**
+   * Move the files. The destination becomes part of the archive, so what was
+   * filed stays indexed.
+   */
+  organizeApply(destination: string): Promise<OrganizeReport>;
+
+  // ---- kept versions ---------------------------------------------------- //
+  /** Every kept copy of one file, newest content first. */
+  versions(fileId: string): Promise<FileVersion[]>;
+  /** Keep the file's current presentation as a version to compare against. */
+  captureVersion(fileId: string): Promise<FileVersion>;
+  deleteVersion(versionId: string): Promise<void>;
 
   // ---- retrieval -------------------------------------------------------- //
   search(query: SearchQuery): Promise<SearchResponse>;
@@ -201,6 +273,8 @@ export interface ArchiveHost {
   addTag(fileId: string, name: string): Promise<Tag>;
   removeTag(fileId: string, tagId: string): Promise<void>;
   createCollection(name: string): Promise<ArchiveCollection>;
+  /** Renames a collection. A collection is a view, so no file is touched. */
+  renameCollection(collectionId: string, name: string): Promise<void>;
   deleteCollection(collectionId: string): Promise<void>;
   addToCollection(fileId: string, collectionId: string): Promise<void>;
   removeFromCollection(fileId: string, collectionId: string): Promise<void>;
@@ -238,12 +312,34 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && typeof window.__TAURI_INTERNALS__ === 'object';
 }
 
+/**
+ * True when this browser can grant a page access to a real folder.
+ *
+ * The File System Access API is what makes the web build an archive rather than
+ * a mock-up: without it a page cannot read the user's files at all, and the
+ * interface says so instead of offering a picker that would do nothing.
+ */
+export function canReadLocalFolders(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker === 'function'
+  );
+}
+
 let cached: ArchiveHost | null = null;
 
-/** The host for this runtime, created once and shared. */
+/**
+ * The host for this runtime, created once and shared.
+ *
+ * Three runtimes, one interface: the desktop build talks to Rust, a browser that
+ * can be granted folders keeps its archive in IndexedDB, and a browser that
+ * cannot says so honestly rather than inventing an archive.
+ */
 export function getHost(): ArchiveHost {
   if (!cached) {
-    cached = isTauri() ? createNativeHost() : createDevelopmentHost();
+    if (isTauri()) cached = createNativeHost();
+    else if (canReadLocalFolders()) cached = createWebHost();
+    else cached = createDevelopmentHost();
   }
   return cached;
 }
@@ -253,7 +349,24 @@ export function getHost(): ArchiveHost {
  * initial chunk, and so importing this module stays side-effect free.
  */
 import { createNativeHost } from './nativeHost';
-import { createDevelopmentHost } from './developmentHost';
+import { createWebHost } from './webHost';
+import { createDevelopmentHost, clearDevelopmentState } from './developmentHost';
 
 /** Clears anything the development host kept in local storage. */
-export { clearDevelopmentState } from './developmentHost';
+export { clearDevelopmentState };
+export { clearWebArchive } from './webHost';
+
+/**
+ * Forget the local preview state, in whichever browser storage holds it.
+ *
+ * Both are cleared rather than the one that is in use: they are both this
+ * origin's data, they cost nothing to drop, and leaving a stale one behind is
+ * how "clear" turns out not to have cleared anything.
+ */
+export async function clearBrowserArchive(): Promise<void> {
+  clearDevelopmentState();
+  if (canReadLocalFolders()) {
+    const { clearWebArchive } = await import('./webHost');
+    await clearWebArchive();
+  }
+}

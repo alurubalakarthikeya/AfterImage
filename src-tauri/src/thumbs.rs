@@ -123,4 +123,6 @@ fn write_video_frame(source: &Path, target: &Path, max_edge: u32) -> Option<()> 
 pub fn remove(dir: &Path, file_id: &str) {
     let _ = std::fs::remove_file(dir.join(format!("{file_id}.jpg")));
     let _ = std::fs::remove_file(dir.join("previews").join(format!("{file_id}.jpg")));
+    // Kept versions are copies of this file's own pixels, so they go with it.
+    crate::versions::remove(dir, file_id);
 }

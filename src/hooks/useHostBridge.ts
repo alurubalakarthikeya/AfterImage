@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { getHost } from '@/services/host';
 import { useArchiveStore } from '@/stores/archive';
 import { usePeopleStore } from '@/stores/people';
+import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
 
 /**
@@ -17,6 +18,32 @@ export function useHostBridge(): void {
   useEffect(() => {
     const host = getHost();
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // The same preferences live in two places: this store, which is what the
+    // interface reads, and the archive's own database, which is what the
+    // watcher and the pipeline read — neither of those ever sees the renderer.
+    // They can only agree if one is pushed when a session opens, so the
+    // persisted values go across once here. The push is idempotent and every
+    // field is optional, so a backend that has never heard of one ignores it.
+    const stored = useSettingsStore.getState();
+    void host
+      .updatePreferences({
+        semanticSearch: stored.semanticSearch,
+        servicePort: stored.servicePort,
+        localProcessing: stored.localProcessing,
+        autoIndex: stored.autoIndex,
+        indexOnBattery: stored.indexOnBattery,
+        llmEnabled: stored.llmEnabled,
+        llmModel: stored.llmModel,
+      })
+      .catch(() => undefined);
+
+    // A finished run is the one thing this application is worth interrupting
+    // somebody for, so it is the only thing that raises a desktop notification.
+    // "Finished" is measured against the previous status rather than guessed
+    // from a single event: a scan of four thousand files reports `indexing`
+    // many times and `idle` once, and only the last one is an ending.
+    let wasBusy = false;
 
     /** Coalesces bursts: a scan of 4,000 files emits many change events. */
     const scheduleRefresh = (delay = 600) => {
@@ -42,8 +69,25 @@ export function useHostBridge(): void {
 
       switch (event.type) {
         case 'index-status': {
-          useArchiveStore.setState({ index: event.status });
-          if (event.status.state === 'idle' || event.status.state === 'error') {
+          const status = event.status;
+          const busy = status.pending + status.processing > 0 || status.state === 'scanning';
+          if (
+            wasBusy &&
+            !busy &&
+            status.done > 0 &&
+            useSettingsStore.getState().notifications
+          ) {
+            void host.notify(
+              'Indexing finished',
+              `${status.done} ${status.done === 1 ? 'file' : 'files'} indexed${
+                status.failed > 0 ? `, ${status.failed} could not be read` : ''
+              }.`,
+            );
+          }
+          wasBusy = busy;
+
+          useArchiveStore.setState({ index: status });
+          if (status.state === 'idle' || status.state === 'error') {
             scheduleRefresh(400);
           }
           return;

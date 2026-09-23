@@ -398,10 +398,15 @@ pub struct ModelQuery {
     pub interpreted: Option<String>,
 }
 
-pub fn parse_query(port: u16, text: &str) -> Option<ModelQuery> {
+/// Ask the local model to interpret a query.
+///
+/// `model` names the model the user selected; an empty string means "whatever
+/// the service was configured with", which is also what happens when the
+/// service is running without one.
+pub fn parse_query(port: u16, text: &str, model: Option<&str>) -> Option<ModelQuery> {
     let response = ureq::post(&format!("{}/query/parse", base(port)))
         .timeout(Duration::from_secs(20))
-        .send_json(json!({ "text": text }))
+        .send_json(json!({ "text": text, "model": model }))
         .ok()?;
     let value: serde_json::Value = response.into_json().ok()?;
 

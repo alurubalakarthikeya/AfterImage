@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import type { RouteId } from '@/types';
+import { useEffect, useRef, useState } from 'react';
+import type { ArchiveCollection, ContextMenuItem, RouteId } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useCollectionStore } from '@/stores/collections';
 import { usePeopleStore } from '@/stores/people';
@@ -11,6 +11,10 @@ import { ProgressBar } from '@/components/common/ProgressBar';
 import { Tooltip } from '@/components/common/Tooltip';
 import { Avatar } from '@/components/common/Avatar';
 import { IconButton } from '@/components/common/IconButton';
+import { ContextMenu } from '@/components/common/ContextMenu';
+import { Modal } from '@/components/common/Overlay';
+import { PromptDialog } from '@/components/common/PromptDialog';
+import { Button } from '@/components/common/Button';
 
 interface NavItem {
   id: RouteId;
@@ -47,7 +51,7 @@ function Row({
       onContextMenu={onContextMenu}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'group/row flex h-10 w-full items-center rounded-[10px] transition-[background-color,color] duration-150',
+        'group/row relative flex h-10 w-full items-center rounded-[10px] transition-[background-color,color] duration-150',
         collapsed ? 'justify-center px-0' : 'gap-2.5 px-3',
         active
           ? 'bg-surface-3 text-ink'
@@ -86,7 +90,7 @@ export function Sidebar() {
   const navigate = useUIStore((state) => state.navigate);
   const activeCollectionId = useUIStore((state) => state.activeCollectionId);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
-  const pushNotice = useUIStore((state) => state.pushNotice);
+  const setActiveCollection = useUIStore((state) => state.setActiveCollection);
 
   const totals = useArchiveStore((state) => state.totals);
   const peopleCount = usePeopleStore((state) => state.stats.people);
@@ -101,6 +105,18 @@ export function Sidebar() {
   const submitDraft = useCollectionStore((state) => state.submitDraft);
   const openCollection = useCollectionStore((state) => state.open);
   const recentIds = useCollectionStore((state) => state.recentIds);
+
+  const renameCollection = useArchiveStore((state) => state.renameCollection);
+  const deleteCollection = useArchiveStore((state) => state.deleteCollection);
+
+  // Renaming, confirming a delete and the row the menu belongs to. The menu is
+  // rendered here rather than in the page so a collection can be managed from
+  // the navigation it lives in, which is where the user is looking at it.
+  const [menu, setMenu] = useState<{ x: number; y: number; collection: ArchiveCollection } | null>(
+    null,
+  );
+  const [renaming, setRenaming] = useState<ArchiveCollection | null>(null);
+  const [doomed, setDoomed] = useState<ArchiveCollection | null>(null);
 
   const userName = useSettingsStore((state) => state.userName);
   const accountLabel = useSettingsStore((state) => state.accountLabel);
@@ -134,10 +150,16 @@ export function Sidebar() {
   const capacityKnown = storage.totalBytes > 0;
   const usedPercent = capacityKnown ? storage.usedBytes / storage.totalBytes : 0;
 
-  return (
+  const sidebar = (
     <aside
       className={cn(
-        'glass flex min-h-0 flex-col rounded-panel border border-line p-2',
+        // `relative z-20` is what keeps this column's own content above the
+        // workspace beside it. The rows are unpositioned, so without a stacking
+        // context of its own a hovered label or an open tooltip — both of which
+        // paint outside the column — were composited under the workspace and
+        // arrived half-covered. The window bars keep the higher z they already
+        // had (status 30, title 40), which is the order they should sit in.
+        'glass relative z-20 flex min-h-0 flex-col rounded-panel border border-line p-2',
         collapsed ? 'gap-2' : 'gap-1',
       )}
       aria-label="Primary"
@@ -210,13 +232,7 @@ export function Sidebar() {
             onClick={() => openCollection(collection.id)}
             onContextMenu={(event) => {
               event.preventDefault();
-              pushNotice({
-                level: 'info',
-                message:
-                  collection.kind === 'smart'
-                    ? `“${collection.name}” — saved rule, resolves automatically`
-                    : `“${collection.name}” — ${collection.fileCount} files`,
-              });
+              setMenu({ x: event.clientX, y: event.clientY, collection });
             }}
             trailing={
               collection.kind === 'smart' ? (
@@ -309,5 +325,76 @@ export function Sidebar() {
         )}
       </div>
     </aside>
+  );
+
+  const menuItems: ContextMenuItem[] = menu
+    ? [
+        { id: 'open', label: 'Open', icon: 'Layers' },
+        { id: 'rename', label: 'Rename…', icon: 'Pencil' },
+        { id: 'delete', label: 'Delete collection', icon: 'Trash2', danger: true, separatorBefore: true },
+      ]
+    : [];
+
+  return (
+    <>
+      {sidebar}
+
+      {menu && (
+        <ContextMenu
+          items={menuItems}
+          x={menu.x}
+          y={menu.y}
+          onCommand={(id) => {
+            const collection = menu.collection;
+            if (id === 'open') openCollection(collection.id);
+            if (id === 'rename') setRenaming(collection);
+            if (id === 'delete') setDoomed(collection);
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
+      <PromptDialog
+        open={renaming !== null}
+        title="Rename collection"
+        description="Only the name changes — the files inside keep their names, paths and tags."
+        initialValue={renaming?.name ?? ''}
+        placeholder="Collection name"
+        confirmLabel="Rename"
+        onConfirm={(name) => {
+          if (renaming) void renameCollection(renaming.id, name);
+        }}
+        onClose={() => setRenaming(null)}
+      />
+
+      <Modal open={doomed !== null} onClose={() => setDoomed(null)} className="max-w-[440px]">
+        <div className="p-5">
+          <h2 className="text-section font-semibold text-ink">Delete {doomed?.name}?</h2>
+          <p className="mt-2 text-meta leading-relaxed text-ink-2">
+            The collection is removed. The {doomed?.fileCount ?? 0} files inside it stay exactly
+            where they are — nothing on disk is moved, renamed or deleted.
+          </p>
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setDoomed(null)}>
+              Keep it
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              icon="Trash2"
+              onClick={() => {
+                const collection = doomed;
+                setDoomed(null);
+                if (!collection) return;
+                if (collection.id === activeCollectionId) setActiveCollection(null);
+                void deleteCollection(collection.id);
+              }}
+            >
+              Delete collection
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 }

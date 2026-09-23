@@ -221,6 +221,8 @@ export const usePeopleStore = create<PeopleStoreState>()((set, get) => {
             available: false,
             missingMegabytes: 0,
             reason: errorMessage(error),
+            canStart: false,
+            onBattery: false,
           },
         });
       }
@@ -230,7 +232,10 @@ export const usePeopleStore = create<PeopleStoreState>()((set, get) => {
       set({ busy: true });
       try {
         await getHost().installModels(['faces']);
-        notice('info', 'Downloading the face models — this continues in the background');
+        // The command starts the local service first when it is not running, so
+        // the note says what will happen rather than promising a download that
+        // has nowhere to go.
+        notice('info', 'Fetching the face models — this continues in the background');
         // The download runs on its own thread, so the status is re-read rather
         // than awaited: nothing here should hold the interface for a minute.
         window.setTimeout(() => {

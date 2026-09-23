@@ -153,29 +153,43 @@ fn summarise(parsed: &Parsed, raw: &str) -> String {
 
 /// FTS5 match expression for a set of terms.
 ///
-/// Every term is trimmed to alphanumeric tokens and OR-ed together, with the
-/// final token left open for prefix matching so results appear while typing.
+/// Every term is trimmed to alphanumeric tokens and OR-ed together, and **every**
+/// token is left open for prefix matching. That last part is what makes search
+/// usable while typing: a person does not type a complete word, they type the
+/// beginning of one, and a query that only ever matched the last token meant
+/// "react err" found nothing while "err" alone found the file.
+///
+/// `person:Priya` searches the names the user gave to people, which is the one
+/// thing the index cannot infer from any file — a photograph of somebody called
+/// Priya says "Priya" nowhere on disk.
 fn match_expression(terms: &[String]) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
 
-    for (index, term) in terms.iter().enumerate() {
-        let term_tokens = tokens(term);
+    for term in terms {
+        let (column, value) = match term.split_once(':') {
+            Some((prefix, rest))
+                if prefix.eq_ignore_ascii_case("person")
+                    || prefix.eq_ignore_ascii_case("face")
+                    || prefix.eq_ignore_ascii_case("of") =>
+            {
+                (Some("people"), rest.to_string())
+            }
+            _ => (None, term.clone()),
+        };
+
+        let term_tokens = tokens(&value);
         if term_tokens.is_empty() {
             continue;
         }
-        let is_last_term = index + 1 == terms.len();
+
         let mut expression = String::new();
-        for (position, token) in term_tokens.iter().enumerate() {
+        for token in &term_tokens {
             if !expression.is_empty() {
                 expression.push_str(" AND ");
             }
-            let is_last_token = position + 1 == term_tokens.len();
-            if is_last_term && is_last_token {
-                expression.push_str(&format!("\"{token}\"*"));
-            } else if term_tokens.len() > 1 {
-                expression.push_str(&format!("\"{token}\""));
-            } else {
-                expression.push_str(&format!("\"{token}\""));
+            match column {
+                Some(column) => expression.push_str(&format!("{{{column}}} : \"{token}\"*")),
+                None => expression.push_str(&format!("\"{token}\"*")),
             }
         }
         if !expression.is_empty() {
@@ -186,6 +200,10 @@ fn match_expression(terms: &[String]) -> Option<String> {
     if parts.is_empty() {
         None
     } else {
+        // OR, not AND: one term that matches is a result worth showing, and the
+        // ranking below is what decides the order. Requiring every word would
+        // hide a file whose description mentions two of the three things asked
+        // for, which is exactly the file the user is looking for.
         Some(parts.join(" OR "))
     }
 }
@@ -286,13 +304,23 @@ impl<'a> Retrieval<'a> {
             return;
         }
         let port = self.state.service_port.load(Ordering::Relaxed);
+        // The model the user picked in Settings, when they picked one. An empty
+        // string is passed through as `None`, which lets the service fall back
+        // to its own configured default rather than looking for a model named "".
+        let model = self
+            .state
+            .llm_model
+            .lock()
+            .ok()
+            .map(|value| value.clone())
+            .filter(|value| !value.trim().is_empty());
         let Some(service::ModelQuery {
             terms,
             kind,
             since_days,
             favorites_only,
             interpreted,
-        }) = service::parse_query(port, &query.raw)
+        }) = service::parse_query(port, &query.raw, model.as_deref())
         else {
             return;
         };
@@ -386,6 +414,10 @@ impl<'a> Retrieval<'a> {
         let mut ranks: HashMap<String, f64> = HashMap::new();
         let mut semantic_hits: HashMap<String, f64> = HashMap::new();
         let mut semantic_available = false;
+        // Set when the only results came from the substring pass, so the
+        // interface can say why they are here rather than pretending the index
+        // matched something it did not.
+        let mut matched_inside_words = false;
 
         if let Some(expression) = expression.as_deref() {
             let rows = db::search_fts(self.conn, expression, &filters, CANDIDATES)?;
@@ -416,6 +448,30 @@ impl<'a> Retrieval<'a> {
                 )?;
                 for file in page.0 {
                     ranks.entry(file.id).or_insert(0.6);
+                }
+            }
+        }
+
+        // Nothing matched a token. Before answering "nothing found", look inside
+        // words: the index is built on whole tokens, so a fragment from the
+        // middle of a filename ("rror" in "error"), a name typed with different
+        // spacing, or a person named after their photographs were indexed all
+        // arrive here. It is the last resort because it is the slowest, and it
+        // runs only when it is the only chance left.
+        if ranks.is_empty() {
+            if let Some(needle) = parsed.terms.iter().max_by_key(|term| term.len()) {
+                let needle = needle.trim();
+                if needle.len() >= 3 {
+                    let ids = db::search_substring(self.conn, needle, 120)?;
+                    for (position, id) in ids.into_iter().enumerate() {
+                        // Below every token hit, and in the order the database
+                        // returned: a substring match is a hint, not a verdict.
+                        let depth = (position as f64 * 0.001).min(0.14);
+                        ranks.insert(id, 0.5 - depth);
+                    }
+                    if !ranks.is_empty() {
+                        matched_inside_words = true;
+                    }
                 }
             }
         }
@@ -570,7 +626,16 @@ impl<'a> Retrieval<'a> {
             tags: parsed.tags.clone(),
             since_days: parsed.since_days,
             favorites_only: parsed.favorites_only,
-            summary: parsed.summary.clone(),
+            // The summary says how the results were found when that is not the
+            // obvious way. It is the difference between "here is what you asked
+            // for" and "here is what I found when the index had nothing" — the
+            // second one is worth being able to see, because it explains a
+            // result that looks unrelated to the words typed.
+            summary: if matched_inside_words {
+                format!("{} · matched inside filenames and people", parsed.summary)
+            } else {
+                parsed.summary.clone()
+            },
             refined_by_model: parsed.refined_by_model,
         };
 
@@ -783,4 +848,60 @@ fn days_since(value: &str) -> Option<f64> {
     let moment = parse_time(value)?;
     let now = chrono::Local::now().timestamp() as f64;
     Some((now - moment) / 86_400.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The expression every token is matched through.
+    ///
+    /// Prefix matching on *every* token, not only the last one, is the
+    /// difference between a search that works while typing and one that only
+    /// works on complete words.
+    #[test]
+    fn every_token_is_a_prefix() {
+        let terms = vec!["react".to_string(), "err".to_string()];
+        let expression = match_expression(&terms).expect("an expression");
+        assert!(expression.contains("\"react\"*"), "{expression}");
+        assert!(expression.contains("\"err\"*"), "{expression}");
+        // OR, so one matching word is enough to be a candidate.
+        assert!(expression.contains(" OR "), "{expression}");
+    }
+
+    /// A quoted phrase stays one requirement: every word in it has to be in the
+    /// file, and the words may appear anywhere they like.
+    ///
+    /// `"not found"` is deliberately *not* a literal substring match. The index
+    /// is a token index, and pretending otherwise would mean missing `found: not`
+    /// — the same phrase, written the way people actually write it. Each word is
+    /// prefix-open, which is what keeps typing a phrase unfinished useful.
+    #[test]
+    fn a_phrase_requires_all_its_words() {
+        let terms = vec!["not found".to_string()];
+        let expression = match_expression(&terms).expect("an expression");
+        assert!(expression.starts_with('('), "{expression}");
+        assert!(expression.contains(" AND "), "{expression}");
+        assert!(expression.contains("\"not\"*"), "{expression}");
+        assert!(expression.contains("\"found\"*"), "{expression}");
+        // One group, so the AND cannot leak into the OR between terms.
+        assert_eq!(expression.matches('(').count(), 1, "{expression}");
+    }
+
+    /// `person:` reaches the column that holds the names the user typed.
+    #[test]
+    fn person_prefix_searches_the_people_column() {
+        let terms = vec!["person:Priya".to_string()];
+        let expression = match_expression(&terms).expect("an expression");
+        assert!(expression.contains("{people}"), "{expression}");
+        assert!(expression.contains("\"priya\"*"), "{expression}");
+    }
+
+    /// And the parser keeps the word intact so the expression can see it.
+    #[test]
+    fn parse_rules_keeps_a_person_term_together() {
+        let parsed = parse_rules("kind:photo person:Priya");
+        assert_eq!(parsed.kinds, vec!["photo".to_string()]);
+        assert_eq!(parsed.terms, vec!["person:Priya".to_string()]);
+    }
 }

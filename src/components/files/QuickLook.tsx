@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import type { ArchiveFile } from '@/types';
+import { getHost } from '@/services/host';
 import { useArchiveStore } from '@/stores/archive';
 import { useUIStore } from '@/stores/ui';
 import { KIND_SINGULAR } from '@/stores/selectors';
@@ -9,6 +10,7 @@ import { Icon } from '@/components/common/Icon';
 import { IconButton } from '@/components/common/IconButton';
 import { FileThumb } from '@/components/common/FileThumb';
 import { ExtractedText } from './ExtractedText';
+import { MediaViewer, canRenderOriginal } from './MediaViewer';
 
 /**
  * Quick look.
@@ -65,15 +67,28 @@ export function QuickLook() {
             className="relative flex items-center justify-center p-6"
             style={{ backgroundColor: 'var(--af-surface-sunken)' }}
           >
-            <div className="max-h-[440px] max-w-full overflow-hidden rounded-thumb">
-              <FileThumb
-                file={file}
-                fill
-                className="max-h-[420px] w-auto"
-                rounded="rounded-thumb"
-                eager
-              />
-            </div>
+            {/* A video plays and a PDF is laid out, from the original, when the
+                host can hand it over. Everything else shows the preview the
+                pipeline wrote, which is what a 1600px JPEG is for. */}
+            {canRenderOriginal(file) ? (
+              <div className="flex h-[420px] w-full items-center justify-center overflow-hidden rounded-thumb">
+                <MediaViewer
+                  file={file}
+                  poster={file.previewPath ? getHost().assetUrl(file.previewPath) : undefined}
+                  className="max-h-[420px] w-full justify-center"
+                />
+              </div>
+            ) : (
+              <div className="max-h-[440px] max-w-full overflow-hidden rounded-thumb">
+                <FileThumb
+                  file={file}
+                  fill
+                  className="max-h-[420px] w-auto"
+                  rounded="rounded-thumb"
+                  eager
+                />
+              </div>
+            )}
 
             <div className="absolute left-4 top-4 flex items-center gap-1">
               <IconButton
@@ -121,7 +136,11 @@ export function QuickLook() {
             </div>
 
             <span className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-pill bg-surface/85 px-2.5 py-0.5 text-[10px] text-ink-3">
-              {file.thumbPath ? 'Local preview · generated from this file' : 'No preview generated'}
+              {canRenderOriginal(file)
+                ? 'The original file, read from this machine'
+                : file.thumbPath
+                  ? 'Local preview · generated from this file'
+                  : 'No preview generated'}
             </span>
           </div>
 

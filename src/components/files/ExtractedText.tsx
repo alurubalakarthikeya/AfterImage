@@ -94,7 +94,7 @@ export function ExtractedText({
                   })
                   .catch(() => undefined);
               }}
-              className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-[10px] text-code-dim transition-colors duration-150 hover:bg-white/8 hover:text-code-ink"
+              className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-[10px] text-code-dim transition-colors duration-150 hover:bg-ink/8 hover:text-code-ink"
             >
               <Icon name={copied ? 'Check' : 'Copy'} size={11} strokeWidth={2.2} />
               {copied ? 'copied' : 'copy'}

@@ -8,10 +8,19 @@ import { IconButton, IconButtonGroup } from '@/components/common/IconButton';
 import { Tooltip } from '@/components/common/Tooltip';
 import { StatusDot } from '@/components/common/Badge';
 import { Avatar } from '@/components/common/Avatar';
-import { LogoMark } from '@/components/common/Logo';
+import { Logo } from '@/components/common/Logo';
 import { SearchBar } from '@/components/search/SearchBar';
 import { ThemeControl } from './ThemeControl';
 import { TitleBar } from './TitleBar';
+
+/**
+ * How much room the wordmark is given, whatever the sidebar is doing.
+ *
+ * Measured from the rendered mark rather than guessed: at `compact`/`sm` the
+ * name is set at 14px semibold with the tracking the component applies, so this
+ * is the width it occupies plus the leading inset.
+ */
+const BRAND_WIDTH = 148;
 
 function NotificationBell() {
   const [open, setOpen] = useState(false);
@@ -92,7 +101,6 @@ export function TopBar({ sidebarWidth }: { sidebarWidth: number }) {
   const viewMode = useUIStore((state) => state.viewMode);
   const setViewMode = useUIStore((state) => state.setViewMode);
   const navigate = useUIStore((state) => state.navigate);
-  const sidebarCollapsed = useUIStore((state) => state.sidebarCollapsed);
   const inspectorOpen = useUIStore((state) => state.inspectorOpen);
   const toggleInspector = useUIStore((state) => state.toggleInspector);
   const addFolder = useArchiveStore((state) => state.addFolder);
@@ -104,15 +112,17 @@ export function TopBar({ sidebarWidth }: { sidebarWidth: number }) {
       left={
         <div
           data-tauri-drag-region
-          className="flex shrink-0 items-center gap-2.5 pl-3.5"
-          style={{ width: sidebarWidth }}
+          className="flex shrink-0 items-center pl-3.5"
+          style={{ width: Math.max(sidebarWidth, BRAND_WIDTH) }}
         >
-          <LogoMark size={21} />
-          {!sidebarCollapsed && (
-            <span className="truncate text-body font-semibold tracking-[-0.015em] text-ink">
-              AfterImage
-            </span>
-          )}
+          {/* The wordmark never collapses.
+
+              It used to be the sidebar's width and disappear with it, which
+              meant the application lost its own name the moment the user
+              reclaimed 150 pixels of a small window. The block is now at least
+              as wide as the name, so the column it aligns with when expanded is
+              a preference and the identity is not. */}
+          <Logo compact size="sm" />
         </div>
       }
       center={<SearchBar />}

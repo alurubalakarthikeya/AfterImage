@@ -13,9 +13,21 @@ import { getHost } from '@/services/host';
 export interface SettingsState {
   appearance: Appearance;
   density: Density;
-  /** Highlight the accent tint on hovered/selected chrome. */
+  /** Flatten the floating chrome: no blur, no translucency. */
   reduceTransparency: boolean;
+  /**
+   * Show the size and pixel dimensions under each tile in the gallery.
+   *
+   * Named for the card it changes rather than for the switch, because the two
+   * places that render a tile read it directly.
+   */
   showThumbnailMeta: boolean;
+  /**
+   * The master switch for everything that needs the local model service: OCR,
+   * visual labels, embeddings and faces. Separate from `autoIndex`, which is
+   * only about whether a change on disk starts work by itself.
+   */
+  localProcessing: boolean;
   /** Thumbnail column floor for the masonry grid, in pixels. */
   thumbnailSize: number;
   autoIndex: boolean;
@@ -49,6 +61,7 @@ export interface SettingsState {
   setThumbnailSize: (size: number) => void;
   setShowThumbnailMeta: (value: boolean) => void;
   setReduceTransparency: (value: boolean) => void;
+  setLocalProcessing: (value: boolean) => void;
   setAutoIndex: (value: boolean) => void;
   setIndexOnBattery: (value: boolean) => void;
   setNotifications: (value: boolean) => void;
@@ -73,6 +86,7 @@ export const useSettingsStore = create<SettingsState>()(
       reduceTransparency: false,
       showThumbnailMeta: true,
       thumbnailSize: 220,
+      localProcessing: true,
       autoIndex: true,
       indexOnBattery: false,
       notifications: true,
@@ -97,13 +111,24 @@ export const useSettingsStore = create<SettingsState>()(
       setReduceTransparency: (reduceTransparency) => set({ reduceTransparency }),
       // The switches below change what the backend actually does, so each one is
       // pushed to the host rather than only parked in local storage.
+      setLocalProcessing: (localProcessing) => {
+        set({ localProcessing });
+        void getHost()
+          .updatePreferences({ localProcessing })
+          .catch(() => undefined);
+      },
       setAutoIndex: (autoIndex) => {
         set({ autoIndex });
         void getHost()
-          .updatePreferences({ localProcessing: autoIndex })
+          .updatePreferences({ autoIndex })
           .catch(() => undefined);
       },
-      setIndexOnBattery: (indexOnBattery) => set({ indexOnBattery }),
+      setIndexOnBattery: (indexOnBattery) => {
+        set({ indexOnBattery });
+        void getHost()
+          .updatePreferences({ indexOnBattery })
+          .catch(() => undefined);
+      },
       setNotifications: (notifications) => set({ notifications }),
       setSemanticSearch: (semanticSearch) => {
         set({ semanticSearch });
@@ -111,8 +136,20 @@ export const useSettingsStore = create<SettingsState>()(
           .updatePreferences({ semanticSearch })
           .catch(() => undefined);
       },
-      setLlmEnabled: (llmEnabled) => set({ llmEnabled }),
-      setLlmModel: (llmModel) => set({ llmModel }),
+      // The model switch and the model name both reach the backend, which is
+      // what actually decides whether a query is interpreted and by which model.
+      setLlmEnabled: (llmEnabled) => {
+        set({ llmEnabled });
+        void getHost()
+          .updatePreferences({ llmEnabled })
+          .catch(() => undefined);
+      },
+      setLlmModel: (llmModel) => {
+        set({ llmModel });
+        void getHost()
+          .updatePreferences({ llmModel })
+          .catch(() => undefined);
+      },
       setServicePort: (servicePort) => {
         set({ servicePort });
         void getHost()
@@ -134,6 +171,7 @@ export const useSettingsStore = create<SettingsState>()(
         reduceTransparency: state.reduceTransparency,
         showThumbnailMeta: state.showThumbnailMeta,
         thumbnailSize: state.thumbnailSize,
+        localProcessing: state.localProcessing,
         autoIndex: state.autoIndex,
         indexOnBattery: state.indexOnBattery,
         notifications: state.notifications,

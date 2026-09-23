@@ -105,6 +105,7 @@ export interface ArchiveStoreState {
   setProject: (fileId: string, projectId: string | null) => Promise<void>;
   toggleCollection: (fileId: string, collectionId: string) => Promise<void>;
   createCollection: (name: string) => Promise<ArchiveCollection | null>;
+  renameCollection: (collectionId: string, name: string) => Promise<void>;
   deleteCollection: (collectionId: string) => Promise<void>;
   createProject: (name: string) => Promise<Project | null>;
   deleteProject: (projectId: string) => Promise<void>;
@@ -479,6 +480,34 @@ export const useArchiveStore = create<ArchiveStoreState>()((set, get) => {
       } catch (error) {
         notice('error', errorMessage(error));
         return null;
+      }
+    },
+
+    /**
+     * Renames a collection.
+     *
+     * Only the label moves: the files inside keep their names, paths and tags,
+     * because a collection is a view over the index rather than a place files
+     * live. A name another collection already has comes back as a sentence.
+     */
+    async renameCollection(collectionId, name) {
+      const clean = name.trim();
+      const existing = get().collections.find((item) => item.id === collectionId);
+      if (!clean || !existing || clean === existing.name) return;
+
+      set((state) => ({
+        collections: state.collections.map((item) =>
+          item.id === collectionId ? { ...item, name: clean } : item,
+        ),
+      }));
+
+      try {
+        await getHost().renameCollection(collectionId, clean);
+        await refreshCollections();
+        notice('success', `Renamed to “${clean}”`);
+      } catch (error) {
+        await refreshCollections();
+        notice('error', errorMessage(error));
       }
     },
 

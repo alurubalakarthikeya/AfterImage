@@ -16,8 +16,9 @@ import { ShortcutsSheet } from '@/components/layout/ShortcutsSheet';
 import { FileContextMenu } from '@/components/files/FileContextMenu';
 import { QuickLook } from '@/components/files/QuickLook';
 import { SimilarPanel } from '@/components/files/SimilarPanel';
+import { Comparison } from '@/components/files/Comparison';
 import { CommandPalette } from '@/components/search/CommandPalette';
-import { LogoMark } from '@/components/common/Logo';
+import { Logo } from '@/components/common/Logo';
 import { Button } from '@/components/common/Button';
 import { Icon } from '@/components/common/Icon';
 
@@ -32,12 +33,8 @@ function StartupFrame({ children }: { children: React.ReactNode }) {
     <div className="flex h-full min-h-0 flex-col bg-canvas">
       <TitleBar
         left={
-          <div
-            data-tauri-drag-region
-            className="flex shrink-0 items-center gap-2.5 pl-6 pr-4"
-          >
-            <LogoMark size={21} />
-            <span className="text-body font-semibold tracking-[-0.015em] text-ink">AfterImage</span>
+          <div data-tauri-drag-region className="flex shrink-0 items-center pl-6 pr-4">
+            <Logo compact size="sm" className="pl-0" />
           </div>
         }
       />
@@ -46,19 +43,24 @@ function StartupFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Shown between the splash and the first index read. */
+/**
+ * Shown between the splash and the first index read.
+ *
+ * The same two things the splash shows — the name and a moving bar — because it
+ * is the same wait, and a second, differently-shaped loading screen would make
+ * opening the application feel like two events instead of one. What is slow is
+ * reported in the status bar, which is the place that already says what the
+ * pipeline is doing; this screen stays quiet.
+ */
 function BootScreen({ slow }: { slow: boolean }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4">
-      <div className="af-pulse-slow">
-        <LogoMark size={40} />
-      </div>
-      <div className="text-center">
-        <p className="text-body font-medium text-ink">AfterImage</p>
-        <p className="mt-0.5 text-meta text-ink-3">
-          {slow ? 'Still opening the index — this is taking longer than usual.' : 'Opening your local archive…'}
-        </p>
-      </div>
+    <div className="flex h-full flex-col items-center justify-center gap-4" role="status">
+      <p className="text-[16px] font-semibold tracking-[-0.02em] text-ink">AfterImage</p>
+      <span
+        className="af-loading-track"
+        aria-hidden="true"
+        data-slow={slow ? 'true' : undefined}
+      />
     </div>
   );
 }
@@ -188,6 +190,7 @@ export default function App() {
       <CommandPalette />
       <QuickLook />
       <SimilarPanel />
+      <Comparison />
       <ShortcutsSheet />
       <NoticeHost />
     </>

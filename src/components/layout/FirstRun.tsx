@@ -3,7 +3,7 @@ import { useArchiveStore } from '@/stores/archive';
 import { getHost } from '@/services/host';
 import { Icon } from '@/components/common/Icon';
 import { Button } from '@/components/common/Button';
-import { LogoMark } from '@/components/common/Logo';
+import { Logo } from '@/components/common/Logo';
 
 const SUPPORTED: Array<{ label: string; detail: string; icon: string }> = [
   { label: 'Images', detail: 'JPG · PNG · WEBP · GIF · HEIC', icon: 'Image' },
@@ -55,10 +55,7 @@ export function FirstRun() {
   return (
     <div className="flex h-full items-center justify-center px-6">
       <div className="w-full max-w-[620px]">
-        <div className="flex items-center gap-2.5">
-          <LogoMark size={26} />
-          <span className="text-card font-semibold tracking-[-0.01em] text-ink">AfterImage</span>
-        </div>
+        <Logo size="lg" className="items-start" />
 
         <h1 className="mt-5 text-title font-semibold leading-tight tracking-[-0.02em] text-ink">
           Choose folders to build your archive

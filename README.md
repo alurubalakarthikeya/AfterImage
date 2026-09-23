@@ -17,6 +17,8 @@ application is fully functional offline and without a language model.
 - **Extracts text** — OCR for screenshots and photos, PyMuPDF for PDF text layers, plain reads for text files.
 - **Searches like a desktop app** — instant FTS5 search across filenames, extracted text, tags, folders, collections, and projects, with structured filters (`kind:screenshot`, `#react`, `is:favorite`, `since:7`).
 - **Optionally goes semantic** — CLIP/SigLIP and sentence-transformer embeddings behind a local vector index (sqlite-vec, FAISS, or numpy). Off by default; on when you install the models.
+- **Reads the picture, not just the file** — an image's DNA: its palette, brightness, contrast, detail and colour cast, measured locally from its own pixels.
+- **Keeps what was there before an edit** — when a file changes on disk, the presentation copy that is about to be replaced is kept, and can be compared against the current one with a draggable before/after divider.
 - **Organises without you organising** — smart collections, tags, projects, favorites, and related files computed from the archive itself.
 
 ---
@@ -58,7 +60,8 @@ afterimage/
 │   ├── components/
 │   │   ├── layout/              # AppShell, Sidebar, TopBar, Inspector, FirstRun, IndexingPanel
 │   │   ├── dashboard/           # HeroCard, QuickStats, RecentFiles, SmartCollections, Activity
-│   │   ├── files/               # FileCard, FileGrid, FileList, FileTimeline, FilePreview, metadata, tags, OCR
+│   │   ├── files/               # FileCard, FileGrid, FileList, FileTimeline, FilePreview, ImageDna
+│   │                        # (measured picture data), Comparison (before/after), metadata, tags, OCR
 │   │   ├── search/              # SearchBar, SearchResults, SearchFilters, CommandPalette
 │   │   └── common/              # IconButton, Badge, Avatar, Card, EmptyState, ContextMenu…
 │   ├── pages/                   # Home, AllFiles, Photos, Screenshots, Documents, Videos, Projects, Collections, Search, Settings
@@ -69,6 +72,7 @@ afterimage/
 │   └── utils/                   # formatting, and search-term highlighting
 ├── src-tauri/                   # Rust backend
 │   ├── src/{lib,commands,db,scan,pipeline,watcher,thumbs,search,service,index,state,models,error}.rs
+│   ├── src/{dna,versions}.rs    # pixel measurement, and the copies kept for comparison
 │   ├── capabilities/default.json
 │   └── tauri.conf.json
 ├── services/indexer/            # local Python indexing service
@@ -131,7 +135,8 @@ Everything AfterImage writes stays under the app-data directory:
 | --- | --- |
 | `%APPDATA%\app.afterimage.desktop\afterimage.sqlite` | the index: files, OCR text, FTS5, tags, collections, activity |
 | `%APPDATA%\app.afterimage.desktop\thumbnails\` | grid thumbnails (640px) |
-| `%APPDATA%\app.afterimage.desktop\thumbnails\previews\` | the larger derivative the hero shows (1600px) |
+| `%APPDATA%\app.afterimage.desktop\thumbnails\previews\` | the larger derivative the hero and the comparison view show (1600px) |
+| `%APPDATA%\app.afterimage.desktop\thumbnails\versions\` | kept copies of the presentations a file has had (at most 12 per file) |
 
 Deleting that folder resets the application to a first run. Your own files are
 never moved, renamed or modified — only read.
@@ -166,6 +171,15 @@ per-user install directory and the `py` launcher before giving up.
 The service starts without any optional dependency: `/health` reports which
 capabilities are actually present, and the desktop app adapts (OCR unavailable →
 text extraction is skipped, embeddings unavailable → full-text search only).
+
+The desktop app starts the service itself and stops it with the window, so there
+is nothing to keep running by hand. It is normally started in the background at
+launch; Settings also has a **Start indexer** button for the case where that
+first attempt loses the race on a slow machine, and pressing **Download** for the
+face models starts it too when it is not already up. Everything the service
+prints goes to `indexer.log` beside the database — an indexer that fails to
+start is the one failure a person cannot diagnose from the window, so it is the
+one that keeps a log.
 
 Configuration is environment-driven; the notable knobs:
 
@@ -259,7 +273,30 @@ query
 
 An optional local model never searches the archive. It only rewrites a sentence
 into those structured criteria, which keeps result time independent of archive
-size — the same reasoning that keeps the model optional in the first place.
+size — the same reasoning that keeps the model optional in the first place. The
+model named in Settings is passed with each request, so choosing one takes effect
+on the next search rather than on the next restart.
+
+## What the switches change
+
+Each switch on the Settings page maps to a preference the backend actually
+reads, and they are deliberately separate — nothing is a master switch for
+something it does not name.
+
+| Switch | Preference | What changes |
+| --- | --- | --- |
+| Local processing | `local_processing` | The gate on everything that needs the Python service: OCR, labels, embeddings, faces, model downloads |
+| Index new files automatically | `auto_index` | Whether a change on disk is enough to start indexing, or waits to be asked |
+| Keep indexing on battery | `index_on_battery` | When off, the queue holds while the machine is on battery power and resumes on mains; nothing is half-processed |
+| Semantic search | `semantic_search` | Whether embeddings are produced and searched, on top of full-text search |
+| Local model | `llm_enabled`, `llm_model` | Whether the optional model rewrites queries, and which model |
+| Indexer service port | `service_port` | The loopback port the local service binds |
+| Show file metadata on cards | renderer only | The size, pixel dimensions and date under each tile |
+| Reduce transparency | renderer only | Blur and translucency off for the floating chrome |
+
+The renderer's own store is the copy a person edits; its values are pushed to
+the archive database when a session opens, which is what the watcher and the
+pipeline read (they never see the renderer).
 
 ---
 
@@ -335,7 +372,7 @@ Everything lands under `src-tauri/target/release/`:
 | Path | What it is |
 | --- | --- |
 | `src-tauri/target/release/afterimage.exe` | the application itself, portable (run it in place) |
-| `src-tauri/target/release/bundle/nsis/AfterImage_0.1.0_x64-setup.exe` | the installer |
+| `src-tauri/target/release/bundle/nsis/AfterImage_0.1.1_x64-setup.exe` | the installer |
 
 The installer is per-user — it does not need administrator rights, and it can be
 copied to another Windows machine as-is. That machine needs no Node, no Rust, no
@@ -348,9 +385,47 @@ search work on that machine. If it is not, the application still runs and says
 so in Settings — indexing, thumbnails and full-text search are all in Rust and
 do not depend on the indexer at all.
 
+### Which build am I running?
+
+Two builds of AfterImage look identical once they are running, and the installer
+always writes to the same place (`%LOCALAPPDATA%\AfterImage`), so re-running an
+old `*-setup.exe` you still have on disk reinstalls that old build and shows the
+old interface. Nothing is broken when that happens; the installer is simply the
+version it was built from.
+
+So the application describes itself. Settings → Privacy ends with the version,
+the moment the running executable was written, the path it is running from, and
+the data directory it is using:
+
+```
+AfterImage 0.1.1 · Built 23 Sep 2026 at 11:52 · Host: tauri
+%APPDATA%\app.afterimage.desktop
+C:\Users\you\AppData\Local\AfterImage\afterimage.exe
+```
+
+Those values are read from the binary and the filesystem at the moment the page
+opens, never typed in by hand. After installing a new build, check that line: if
+the version and the build time moved, the new build is the one running.
+
+### Nothing leaves the machine
+
+AfterImage has no server to talk to and no account to talk to it with. The
+renderer is bundled into the executable (no CDN, no remote fonts — Inter and
+JetBrains Mono ship inside the bundle), the index is SQLite on disk, and the only
+HTTP in the whole application is to `127.0.0.1`: the local indexer on its own
+port, and Ollama if you have enabled the local model.
+
+The single exception is a deliberate one: downloading model files (the ~37 MB
+face bundle, or OCR and embedding models for the Python service) happens once,
+on request, from the URLs in `services/indexer/app/models.py`. After that the
+machine is offline-capable, and nothing about your files is ever sent anywhere.
+
+There is nothing to deploy. `npm run tauri build` produces a self-contained
+installer; there is no hosted component, no `npm publish`, and no release step.
+
 ### Installing and launching
 
-1. Double-click `AfterImage_0.1.0_x64-setup.exe` and follow the installer.
+1. Double-click `AfterImage_0.1.1_x64-setup.exe` and follow the installer.
 2. Launch **AfterImage** from the Start menu.
 3. `Choose Folder` → pick something real (`%USERPROFILE%\Pictures`, `Downloads`).
 4. Watch the status line count up; tiles appear as thumbnails are written.
@@ -377,6 +452,8 @@ your own files are never moved, renamed or modified.
 | Related files | Scored locally from shared tags, shared text terms, folder, project and time |
 | Similar images | Requires the local embedding model; the button appears only for files that have an embedding |
 | Indexer lifecycle | Rust starts and stops the service; packaged by `npm run service:build`, or a `.venv` on a development machine |
+| Image DNA | Measured in Rust from the file's own pixels, on demand and cached per revision. A format this build cannot decode reports the facts the scan already knew and says why |
+| Kept versions | The presentation copy is kept whenever the scan sees a file's content change, including changes made while the application was closed. Capped at 12 per file, oldest first out |
 | Volume capacity | Not reported yet, so the storage widget shows what is indexed rather than a fraction of the disk |
 
 ---

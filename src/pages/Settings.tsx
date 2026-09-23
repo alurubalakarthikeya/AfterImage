@@ -1,68 +1,22 @@
 import { useEffect, useState } from 'react';
-import type { Appearance, Density } from '@/types';
+import type { Appearance, BuildInfo, Density } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
 import { getHost, isTauri } from '@/services/host';
-import { clearDevelopmentState } from '@/services/developmentHost';
-import { cn, formatCount, formatStorage } from '@/utils/format';
+import { clearBrowserArchive } from '@/services/host';
+import { cn, formatClock, formatCount, formatDayLabel, formatStorage } from '@/utils/format';
 import { USE_CASES } from '@/utils/useCases';
 import { Page } from '@/components/common/Page';
+import { Row, Section } from '@/components/common/Section';
+import { Organizer } from '@/components/settings/Organizer';
 import { PageHeader } from '@/components/common/PageHeader';
-import { Card } from '@/components/common/Card';
 import { Button } from '@/components/common/Button';
 import { Icon } from '@/components/common/Icon';
 import { usePeopleStore } from '@/stores/people';
 import { Badge } from '@/components/common/Badge';
 import { Avatar } from '@/components/common/Avatar';
 import { ProgressBar } from '@/components/common/ProgressBar';
-
-function Section({
-  title,
-  description,
-  children,
-  icon,
-}: {
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-  icon: string;
-}) {
-  return (
-    <Card className="p-4">
-      <div className="flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-surface-2 text-ink-2">
-          <Icon name={icon} size={15} strokeWidth={1.9} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-card font-semibold text-ink">{title}</h2>
-          {description && <p className="mt-0.5 text-meta text-ink-2">{description}</p>}
-          <div className="mt-4 flex flex-col gap-3">{children}</div>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function Row({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 border-b border-line pb-3 last:border-b-0 last:pb-0">
-      <div className="min-w-0">
-        <div className="text-body text-ink">{label}</div>
-        {hint && <div className="mt-0.5 text-2xs text-ink-3">{hint}</div>}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  );
-}
 
 function Toggle({
   checked,
@@ -85,9 +39,18 @@ function Toggle({
         checked ? 'bg-ink' : 'bg-sunken',
       )}
     >
+      {/*
+        * The knob is `canvas` — the token that means "the opposite of ink" —
+        * because the track is `ink` when the switch is on. A white knob reads
+        * on three of the four combinations and disappears on the fourth: in a
+        * dark theme, `ink` is near-white, so white-on-white is a switch that
+        * looks broken exactly where it matters most. The hairline keeps it
+        * legible in the dark theme's off state as well, where the track is as
+        * dark as the canvas behind it.
+        */}
       <span
         className={cn(
-          'inline-block h-3.5 w-3.5 rounded-full bg-white shadow-soft transition-transform duration-150',
+          'inline-block h-3.5 w-3.5 rounded-full border border-line-strong bg-canvas shadow-soft transition-transform duration-150',
           checked ? 'translate-x-[18px]' : 'translate-x-[3px]',
         )}
       />
@@ -121,6 +84,8 @@ export function Settings() {
   const activity = useArchiveStore((state) => state.activity);
   const pushNotice = useUIStore((state) => state.pushNotice);
   const [newFolder, setNewFolder] = useState('');
+  const [build, setBuild] = useState<BuildInfo | null>(null);
+  const [starting, setStarting] = useState(false);
 
   const host = getHost();
   const index = useArchiveStore((state) => state.index);
@@ -136,6 +101,8 @@ export function Settings() {
     available: false,
     missingMegabytes: 0,
     reason: 'Reading the model store…',
+    canStart: false,
+    onBattery: false,
   };
   const faceBundle = peopleModels.bundles.find((bundle) => bundle.name === 'faces');
   const facesReady = faceBundle?.ready ?? false;
@@ -146,8 +113,38 @@ export function Settings() {
     void people.loadModels();
     // The group counts belong in this page even when People has never been open.
     if (people.status === 'idle') void people.load();
+    // Which build this is, read from the running binary. Never guessed from the
+    // source tree, so it cannot claim to be newer than it is.
+    void host
+      .buildInfo()
+      .then(setBuild)
+      .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Start the local indexer because the interface says it is not running.
+   *
+   * The model store cannot be read — let alone added to — without one, and the
+   * one place it is started is at launch, where a slow machine can lose the
+   * race. So this exists to turn "not running" into "running" without asking
+   * anybody to open a terminal.
+   */
+  const startIndexer = async () => {
+    setStarting(true);
+    try {
+      pushNotice({ level: 'success', message: await host.startService() });
+      await people.loadModels();
+    } catch (error) {
+      pushNotice({
+        level: 'error',
+        message:
+          error instanceof Error ? error.message : 'The local indexer could not be started.',
+      });
+    } finally {
+      setStarting(false);
+    }
+  };
 
   return (
     // Centred rather than pinned left: with the inspector out of the way this
@@ -159,7 +156,11 @@ export function Settings() {
         subtitle="Preferences for this machine. Nothing here syncs anywhere."
       >
         <Badge tone="accent" icon={isTauri() ? 'Shield' : 'Info'}>
-          {host.name === 'tauri' ? 'Desktop build' : 'Browser preview'}
+          {host.name === 'tauri'
+            ? 'Desktop build'
+            : host.name === 'web'
+              ? 'Web build · stored in this browser'
+              : 'Browser preview'}
         </Badge>
       </PageHeader>
 
@@ -399,19 +400,41 @@ export function Settings() {
         )}
       </Section>
 
+      <Organizer />
+
       <Section
         icon="Cpu"
         title="Indexing and search"
         description="The pipeline runs locally. Turning the model off leaves search fully working."
       >
-        <Row label="Index new files automatically" hint="Watches your folders in the background.">
+        <Row
+          label="Local processing"
+          hint="OCR, visual labels, embeddings and faces. Off leaves search on filenames, paths, tags and any text already in the index."
+        >
+          <Toggle
+            label="Local processing"
+            checked={settings.localProcessing}
+            onChange={settings.setLocalProcessing}
+          />
+        </Row>
+        <Row
+          label="Index new files automatically"
+          hint="Watches your folders, so a change on disk is read without being asked for."
+        >
           <Toggle
             label="Auto index"
             checked={settings.autoIndex}
             onChange={settings.setAutoIndex}
           />
         </Row>
-        <Row label="Keep indexing on battery" hint="Off by default — thumbnailing is the expensive step.">
+        <Row
+          label="Keep indexing on battery"
+          hint={
+            peopleModels.onBattery
+              ? 'This machine is on battery power now, so the queue is waiting for mains power.'
+              : 'Off means the queue waits on battery power. Plugging in resumes it — nothing is lost.'
+          }
+        >
           <Toggle
             label="Index on battery"
             checked={settings.indexOnBattery}
@@ -430,7 +453,7 @@ export function Settings() {
         </Row>
         <Row
           label="Local model"
-          hint="Used only to translate a question into structured filters. It never reads your files."
+          hint={settings.llmEnabled ? 'Used only to translate a question into structured filters. It never reads your files. Needs a model runtime listening on this machine.' : 'Off: search parses questions with the built-in rules, which need no model at all.'}
         >
           <div className="flex items-center gap-2">
             <select
@@ -475,9 +498,13 @@ export function Settings() {
               : (peopleModels.reason ?? 'Not available yet.')
           }
         >
+          {/* Three different states, three different answers. Offering a
+              download while nothing is running to download into is what made
+              this button look broken; offering to start something that is not
+              installed is the same mistake the other way round. */}
           {facesReady ? (
             <Badge tone="positive">Installed</Badge>
-          ) : (
+          ) : peopleModels.available ? (
             <Button
               variant="secondary"
               size="sm"
@@ -487,6 +514,18 @@ export function Settings() {
             >
               Download{facesCost ? ` \u00b7 ${facesCost} MB` : ''}
             </Button>
+          ) : peopleModels.canStart ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="Play"
+              disabled={starting}
+              onClick={() => void startIndexer()}
+            >
+              {starting ? 'Starting\u2026' : 'Start indexer'}
+            </Button>
+          ) : (
+            <Badge tone="caution">Not installed</Badge>
           )}
         </Row>
         <Row
@@ -592,8 +631,8 @@ export function Settings() {
               size="sm"
               icon="Trash2"
               onClick={() => {
-                clearDevelopmentState();
-                pushNotice({ level: 'success', message: 'Local preview state cleared — reloading.' });
+                void clearBrowserArchive();
+                pushNotice({ level: 'success', message: 'Local state cleared — reloading.' });
                 setTimeout(() => window.location.reload(), 500);
               }}
             >
@@ -623,8 +662,17 @@ export function Settings() {
           </p>
         </div>
 
+        {/* Which build this is, read from the running binary rather than typed
+            here. Two installers of AfterImage are indistinguishable in the
+            window, so this row is the only honest answer to "did my new build
+            install?" — and the paths below answer "where does it all live?". */}
         <div className="flex flex-wrap items-center gap-4 border-t border-line pt-3 text-2xs text-ink-3">
-          <span>AfterImage 0.1.0</span>
+          <span>AfterImage {build?.version ?? __BUILD_VERSION__}</span>
+          {build?.builtAt && (
+            <span title={build.builtAt}>
+              Built {formatDayLabel(build.builtAt)} at {formatClock(build.builtAt)}
+            </span>
+          )}
           <span>Host: {host.name}</span>
           <span>
             Index size:{' '}
@@ -632,6 +680,25 @@ export function Settings() {
           </span>
           <span>{formatCount(activity.length)} recent events</span>
         </div>
+
+        {build && (
+          <div className="flex flex-col gap-1 text-2xs text-ink-3">
+            <span className="flex items-start gap-2">
+              <Icon
+                name={build.bundledIndexer ? 'Check' : 'Info'}
+                size={12}
+                className={cn('mt-0.5 shrink-0', build.bundledIndexer ? 'text-positive' : 'text-ink-3')}
+              />
+              {build.bundledIndexer
+                ? 'Indexer: bundled with this build, so this machine needs no Python for OCR, labels or faces.'
+                : 'Indexer: not bundled with this build, so it is started from a Python environment on this machine when one is present.'}
+            </span>
+            <span className="font-mono text-[10.5px] leading-relaxed">{build.dataDir}</span>
+            {build.executable && (
+              <span className="font-mono text-[10.5px] leading-relaxed">{build.executable}</span>
+            )}
+          </div>
+        )}
       </Section>
     </Page>
   );

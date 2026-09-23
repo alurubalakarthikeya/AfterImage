@@ -28,10 +28,12 @@ use crate::db::{self, STATE_FAILED, STATE_INDEXED};
 use crate::error::{AppError, AppResult};
 use crate::models::IndexStatus;
 use crate::people;
+use crate::power;
 use crate::scan::kind_supports_text;
 use crate::service::{self, FaceOutcome, TextOutcome};
 use crate::state::AppState;
 use crate::thumbs;
+use crate::versions;
 
 #[derive(Debug, Clone)]
 pub struct Job {
@@ -72,8 +74,34 @@ pub fn enqueue(state: &AppState, jobs: Vec<Job>) {
     }
 }
 
+/// What the interface is told while the queue waits for mains power.
+///
+/// Written as the issue text because that is already the honest place for
+/// "why is nothing happening" — and it is cleared by value, so a resume never
+/// wipes out a different explanation.
+const ON_BATTERY_ISSUE: &str = "Indexing is paused while this machine is on battery power. \
+                                 Plug in, or turn on \"keep indexing on battery\" in Settings.";
+
+/// How often the power state is re-read while the queue is held.
+const POWER_POLL: Duration = Duration::from_secs(20);
+
 fn worker(app: AppHandle, state: Arc<AppState>, receiver: Receiver<Job>) {
+    // The battery is asked about at most once per `POWER_POLL`, so a queue of
+    // thousands of files costs a handful of system calls rather than thousands.
+    let mut power_check: Option<(Instant, bool)> = None;
+
     loop {
+        // Held before the job is taken, not after: leaving it in the channel
+        // keeps the counts the interface shows true, and nothing is ever
+        // half-processed because the machine was unplugged mid-run.
+        if !state.index_on_battery.load(Ordering::Relaxed) {
+            let on_battery = measured_on_battery(&mut power_check);
+            state.on_battery.store(on_battery, Ordering::Relaxed);
+            if on_battery && hold_for_power(&app, &state, &mut power_check) {
+                return;
+            }
+        }
+
         let job = match receiver.recv() {
             Ok(job) => job,
             Err(_) => return,
@@ -138,6 +166,49 @@ fn wait_while_paused(state: &Arc<AppState>) {
     }
 }
 
+/// The power state, cached for `POWER_POLL`.
+fn measured_on_battery(cache: &mut Option<(Instant, bool)>) -> bool {
+    if let Some((at, value)) = cache {
+        if at.elapsed() < POWER_POLL {
+            return *value;
+        }
+    }
+    let value = power::on_battery();
+    *cache = Some((Instant::now(), value));
+    value
+}
+
+/// Block the queue until mains power is restored, the setting changes, or the
+/// application is closing. Returns true only when it should stop for good.
+fn hold_for_power(
+    app: &AppHandle,
+    state: &Arc<AppState>,
+    cache: &mut Option<(Instant, bool)>,
+) -> bool {
+    // Say it once, in the words the status line will keep showing.
+    state.set_issue(Some(ON_BATTERY_ISSUE.to_string()));
+    log::info!("pipeline: holding the queue while on battery power");
+    emit_status(app, state, "paused");
+
+    while !state.stopping.load(Ordering::SeqCst) {
+        if state.index_on_battery.load(Ordering::Relaxed) {
+            break;
+        }
+        thread::sleep(POWER_POLL);
+        if !measured_on_battery(cache) {
+            break;
+        }
+    }
+
+    let stopping = state.stopping.load(Ordering::SeqCst);
+    state.on_battery.store(false, Ordering::Relaxed);
+    state.clear_issue_if(ON_BATTERY_ISSUE);
+    if !stopping {
+        emit_status(app, state, "idle");
+    }
+    stopping
+}
+
 /// Run every stage for one file.
 fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
     let port = state.service_port.load(Ordering::Relaxed);
@@ -156,11 +227,43 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
     // ---- 1. Dimensions and thumbnails -------------------------------------
     let source = std::path::Path::new(&job.path);
     let dimensions = thumbs::dimensions(source);
+
+    // A file whose bytes moved since the last pass was edited in some other
+    // application. Save the presentation copy that is about to be replaced
+    // before the new one is written: it is the only record of what the picture
+    // looked like before, and what the before/after view compares against.
+    let previous = {
+        let conn = state.db()?;
+        versions::keep_previous_preview(&conn, &state.thumbnail_dir, &job.file_id)
+    };
+
     let thumbnail = thumbs::generate(&state.thumbnail_dir, &job.file_id, &job.path, &job.kind);
     // The bigger derivative is what the Home hero shows. It is generated here,
     // once, from the user's own file, so the hero is always a real photograph
     // from this library — never a bundled or borrowed image.
     let preview = thumbs::generate_preview(&state.thumbnail_dir, &job.file_id, &job.path, &job.kind);
+
+    // The earlier copy is only worth keeping if something replaced it. When the
+    // format cannot be decoded again the existing presentation stays on screen,
+    // and a version of it would be a duplicate of what is already there.
+    match (previous, preview.is_some()) {
+        (Some(previous), true) => {
+            let conn = state.db()?;
+            match previous.keep(&conn) {
+                Ok(version) => log::debug!(
+                    "kept the version of {} from {}",
+                    job.path,
+                    version.content_at
+                ),
+                Err(error) => log::warn!(
+                    "could not keep an earlier version of {}: {error}",
+                    job.path
+                ),
+            }
+        }
+        (Some(previous), false) => previous.discard(),
+        (None, _) => {}
+    }
 
     {
         let conn = state.db()?;

@@ -23,8 +23,8 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    ActivityEntry, ArchiveCollection, ArchiveTotals, CollectionRule, FileQuery, FileRecord, Folder,
-    Project, StorageStats, Tag,
+    ActivityEntry, ArchiveCollection, ArchiveTotals, CollectionRule, FileQuery, FileRecord, FileVersion,
+    Folder, Project, StorageStats, Tag,
 };
 
 /// Index states a file can be in.
@@ -65,7 +65,48 @@ pub fn open(path: &Path) -> AppResult<Connection> {
     Ok(connection)
 }
 
+/// Whether the full-text table predates the current schema.
+///
+/// FTS5 tables cannot be altered in place, so a column that was added later
+/// means dropping and refilling. The check is a `pragma`, the drop only ever
+/// happens when a column is genuinely missing, and the refill reads from the
+/// tables that own the data — so this is a migration, not a repair.
+fn search_table_needs_rebuild(conn: &Connection) -> AppResult<bool> {
+    let mut statement = conn.prepare("PRAGMA table_info(file_search)")?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    if columns.is_empty() {
+        // No table yet: the migration below creates it with every column.
+        return Ok(false);
+    }
+    Ok(!columns.iter().any(|column| column == "people"))
+}
+
+/// Refill the full-text table from the tables that own the data.
+///
+/// One row per file, in one pass. Called only after a schema change, because on
+/// twelve thousand files it is a few seconds of work that nothing else needs.
+pub fn rebuild_search_index(conn: &Connection) -> AppResult<usize> {
+    let ids = {
+        let mut statement = conn.prepare("SELECT id FROM files")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<String>>>()?
+    };
+    for id in &ids {
+        reindex_search_row(conn, id)?;
+    }
+    Ok(ids.len())
+}
+
 pub fn migrate(conn: &Connection) -> AppResult<()> {
+    let rebuild_search = search_table_needs_rebuild(conn)?;
+    if rebuild_search {
+        log::info!("search index predates the people column — rebuilding it");
+        conn.execute_batch("DROP TABLE IF EXISTS file_search;")
+            .map_err(|error| AppError::Other(format!("could not rebuild the search index: {error}")))?;
+    }
+
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS folders (
@@ -174,6 +215,24 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             value TEXT NOT NULL
         );
 
+        -- Kept versions, for before/after comparison.
+        --
+        -- One row per presentation copy the archive decided to hold on to: the
+        -- copy that existed before an edit landed, or one the user kept by hand.
+        -- The file itself is a JPEG in the thumbnail directory, which is the
+        -- only place the webview is allowed to read from.
+        CREATE TABLE IF NOT EXISTS file_versions (
+            id          TEXT PRIMARY KEY,
+            file_id     TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+            path        TEXT NOT NULL,
+            bytes       INTEGER NOT NULL DEFAULT 0,
+            width       INTEGER,
+            height      INTEGER,
+            captured_at TEXT NOT NULL,
+            content_at  TEXT NOT NULL,
+            source      TEXT NOT NULL DEFAULT 'change'
+        );
+
         -- Face grouping.
         --
         -- `people` holds a *suggestion* of identity: a centroid and a count.
@@ -219,6 +278,7 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_files_name       ON files(name);
         CREATE INDEX IF NOT EXISTS idx_file_tags_tag    ON file_tags(tag_id);
         CREATE INDEX IF NOT EXISTS idx_activity_at      ON activity(at DESC);
+        CREATE INDEX IF NOT EXISTS idx_versions_file    ON file_versions(file_id, content_at DESC);
 
         -- One searchable document per file: name, generated title, description,
         -- labels, extracted text, folder, tags and project name. Rebuilt from
@@ -233,10 +293,22 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             folder,
             tags,
             project,
+            -- The names the user gave to people in these files. Without this
+            -- column, searching for somebody by name found nothing at all: the
+            -- name exists only in the `people` table, and no query ever reached
+            -- it.
+            people,
             tokenize = 'unicode61 remove_diacritics 2'
         );
         "#,
     )?;
+
+    // A full-text table cannot be altered in place, so a schema change there is
+    // a rebuild: the table was dropped above, this is what fills it again.
+    if rebuild_search {
+        let files = rebuild_search_index(conn)?;
+        log::info!("rebuild of the search index finished: {files} files");
+    }
 
     // Columns added after the first release. `CREATE TABLE IF NOT EXISTS` does
     // nothing to an existing database, so anything new arrives by ALTER.
@@ -245,6 +317,11 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
     // "no faces here" from "not looked yet" is what stops the face pass from
     // re-reading every photograph with nobody in it, forever.
     ensure_column(conn, "files", "faces_state", "TEXT NOT NULL DEFAULT 'none'")?;
+    // When the content a file has now was written, the content it held before
+    // that. Set by the scan when a fingerprint moves, consumed by the pipeline
+    // to keep the presentation copy that is about to be replaced, and null the
+    // rest of the time.
+    ensure_column(conn, "files", "previous_modified_at", "TEXT")?;
 
     Ok(())
 }
@@ -467,6 +544,15 @@ pub fn upsert_scanned_file(conn: &Connection, row: &ScanRow) -> AppResult<()> {
             modified_at = excluded.modified_at,
             hash = excluded.hash,
             seen_at = excluded.seen_at,
+            -- When the content moved, the timestamp it had before is kept.
+            -- Somebody edited the file, and the pipeline is about to replace its
+            -- presentation copy: this is the last moment at which the previous
+            -- one can still be saved. SET expressions read the old row, so this
+            -- stores the timestamp being overwritten.
+            previous_modified_at = CASE
+                WHEN files.hash IS excluded.hash THEN files.previous_modified_at
+                ELSE files.modified_at
+            END,
             index_state = CASE
                 WHEN files.hash IS excluded.hash AND files.index_state IN ('indexed', 'unsupported')
                     THEN files.index_state
@@ -586,6 +672,33 @@ pub fn set_preview(conn: &Connection, file_id: &str, path: &str) -> AppResult<()
     Ok(())
 }
 
+/// The modification time a file's content had before its last change.
+///
+/// The scan writes this whenever a fingerprint moves, and reading it clears it:
+/// a kept version is taken exactly once per change, so a crash between the scan
+/// and the pipeline can never produce two copies of the same edit.
+///
+/// `None` means the file has never changed since it was first indexed, which
+/// also means there is nothing to compare it against.
+pub fn take_previous_content(conn: &Connection, file_id: &str) -> AppResult<Option<String>> {
+    let previous = conn
+        .query_row(
+            "SELECT previous_modified_at FROM files WHERE id = ?1",
+            params![file_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+
+    if previous.is_some() {
+        conn.execute(
+            "UPDATE files SET previous_modified_at = NULL WHERE id = ?1",
+            params![file_id],
+        )?;
+    }
+    Ok(previous)
+}
+
 /// The photograph the Home hero should show, chosen from the user's own files.
 ///
 /// Deliberately narrow: a landscape photograph, large enough not to look like a
@@ -696,11 +809,18 @@ pub fn save_generated(
 /// Called after any change to searchable content, so `file_search` is a
 /// projection of the tables rather than a parallel truth that can drift.
 pub fn reindex_search_row(conn: &Connection, file_id: &str) -> AppResult<()> {
+    // The names of the people in this file, as the user typed them. `group_concat`
+    // over the faces join means a photograph with three named faces contributes
+    // all three, and an unnamed group contributes nothing rather than a placeholder.
     let row = conn
         .query_row(
             "SELECT f.name, COALESCE(f.generated_title, ''), COALESCE(f.description, ''),
                     f.labels, COALESCE(o.text, ''), f.folder_path, f.project_id,
-                    COALESCE(p.name, '')
+                    COALESCE(p.name, ''),
+                    COALESCE((SELECT group_concat(pe.label, ' ')
+                              FROM faces fa JOIN people pe ON pe.id = fa.person_id
+                              WHERE fa.file_id = f.id AND pe.label IS NOT NULL
+                                AND pe.hidden = 0), '')
              FROM files f
              LEFT JOIN ocr_content o ON o.file_id = f.id
              LEFT JOIN projects p ON p.id = f.project_id
@@ -715,13 +835,14 @@ pub fn reindex_search_row(conn: &Connection, file_id: &str) -> AppResult<()> {
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
                 ))
             },
         )
         .optional()?;
 
     conn.execute("DELETE FROM file_search WHERE file_id = ?1", params![file_id])?;
-    let Some((name, title, description, labels, text, folder, project)) = row else {
+    let Some((name, title, description, labels, text, folder, project, people)) = row else {
         return Ok(());
     };
 
@@ -739,8 +860,8 @@ pub fn reindex_search_row(conn: &Connection, file_id: &str) -> AppResult<()> {
 
     let labels_text = labels_from_json(&labels).join(" ");
     conn.execute(
-        "INSERT INTO file_search (file_id, name, title, description, labels, text, folder, tags, project)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO file_search (file_id, name, title, description, labels, text, folder, tags, project, people)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             file_id,
             name,
@@ -750,7 +871,8 @@ pub fn reindex_search_row(conn: &Connection, file_id: &str) -> AppResult<()> {
             text,
             folder,
             tags,
-            project
+            project,
+            people
         ],
     )?;
     Ok(())
@@ -1228,6 +1350,100 @@ pub fn detach_collection(conn: &Connection, file_id: &str, collection_id: &str) 
     Ok(())
 }
 
+/// Rename a collection.
+///
+/// Names are unique in the schema, so a clash is reported as a sentence rather
+/// than surfacing SQLite's constraint error to the interface.
+pub fn rename_collection(conn: &Connection, id: &str, name: &str) -> AppResult<()> {
+    let clean = name.trim();
+    if clean.is_empty() {
+        return Err(AppError::Config("A collection needs a name".into()));
+    }
+
+    let taken: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM collections WHERE name = ?1 AND id <> ?2",
+        params![clean, id],
+        |row| row.get(0),
+    )?;
+    if taken > 0 {
+        return Err(AppError::Config(format!(
+            "There is already a collection called “{clean}”"
+        )));
+    }
+
+    let changed = conn.execute(
+        "UPDATE collections SET name = ?2 WHERE id = ?1",
+        params![id, clean],
+    )?;
+    if changed == 0 {
+        return Err(AppError::NotFound("that collection is no longer here".into()));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Kept versions
+// ---------------------------------------------------------------------------
+
+const VERSION_COLUMNS: &str =
+    "id, file_id, path, bytes, width, height, captured_at, content_at, source";
+
+fn row_to_version(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileVersion> {
+    Ok(FileVersion {
+        id: row.get(0)?,
+        file_id: row.get(1)?,
+        path: row.get(2)?,
+        bytes: row.get(3)?,
+        width: row.get(4)?,
+        height: row.get(5)?,
+        captured_at: row.get(6)?,
+        content_at: row.get(7)?,
+        source: row.get(8)?,
+    })
+}
+
+pub fn insert_version(conn: &Connection, version: &FileVersion) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO file_versions
+            (id, file_id, path, bytes, width, height, captured_at, content_at, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            version.id,
+            version.file_id,
+            version.path,
+            version.bytes,
+            version.width,
+            version.height,
+            version.captured_at,
+            version.content_at,
+            version.source,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Every kept copy of one file, newest content first.
+pub fn list_versions(conn: &Connection, file_id: &str) -> AppResult<Vec<FileVersion>> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {VERSION_COLUMNS} FROM file_versions WHERE file_id = ?1
+         ORDER BY content_at DESC, captured_at DESC"
+    ))?;
+    let rows = statement.query_map(params![file_id], row_to_version)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+pub fn version_by_id(conn: &Connection, id: &str) -> AppResult<Option<FileVersion>> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT {VERSION_COLUMNS} FROM file_versions WHERE id = ?1"
+    ))?;
+    Ok(statement.query_row(params![id], row_to_version).optional()?)
+}
+
+pub fn delete_version(conn: &Connection, id: &str) -> AppResult<()> {
+    conn.execute("DELETE FROM file_versions WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Projects
 // ---------------------------------------------------------------------------
@@ -1311,6 +1527,90 @@ pub fn set_file_name(conn: &Connection, file_id: &str, name: &str, path: &str) -
     Ok(())
 }
 
+/// A file that has been moved to another folder, by the organizer.
+///
+/// Distinct from `set_file_name` because a move also changes which folder the
+/// file belongs to, and therefore which folder a search for a location finds it
+/// through — the full-text row is rebuilt rather than patched, so searching the
+/// archive by the folder it now lives in works immediately.
+pub fn set_file_location(
+    conn: &Connection,
+    file_id: &str,
+    name: &str,
+    path: &str,
+    folder_id: &str,
+    folder_path: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "UPDATE files SET name = ?2, path = ?3, folder_id = ?4, folder_path = ?5, indexed_at = ?6 \
+         WHERE id = ?1",
+        params![file_id, name, path, folder_id, folder_path, now()],
+    )?;
+    reindex_search_row(conn, file_id)?;
+    Ok(())
+}
+
+/// One file as the organizer sees it: where it is, what it is, and how the
+/// archive has it grouped.
+///
+/// Collections come back alphabetically so "the first one" is a stable answer,
+/// and only named people are included — an unnamed group of faces has no name to
+/// give a folder.
+pub struct OrganizeRow {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub bytes: i64,
+    pub index_state: String,
+    pub collections: Vec<String>,
+    pub people: Vec<String>,
+}
+
+/// Field separator for the `group_concat` columns below. Unit separator: it
+/// cannot occur in a filename on any platform this ships on.
+const GROUP_SEPARATOR: char = '\u{1f}';
+
+pub fn organize_rows(conn: &Connection) -> AppResult<Vec<OrganizeRow>> {
+    let mut statement = conn.prepare(
+        "SELECT f.id, f.name, f.path, f.kind, f.bytes, f.index_state, \
+                (SELECT group_concat(c.name, char(31)) FROM file_collections fc \
+                   JOIN collections c ON c.id = fc.collection_id \
+                  WHERE fc.file_id = f.id ORDER BY c.name), \
+                (SELECT group_concat(DISTINCT p.label, char(31)) FROM faces fa \
+                   JOIN people p ON p.id = fa.person_id \
+                  WHERE fa.file_id = f.id AND p.label IS NOT NULL AND p.label <> '' \
+                    AND p.hidden = 0) \
+           FROM files f",
+    )?;
+
+    let rows = statement.query_map([], |row| {
+        let split = |value: Option<String>| -> Vec<String> {
+            value
+                .map(|text| {
+                    text.split(GROUP_SEPARATOR)
+                        .filter(|part| !part.trim().is_empty())
+                        .map(|part| part.to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        Ok(OrganizeRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            path: row.get(2)?,
+            kind: row.get(3)?,
+            bytes: row.get(4)?,
+            index_state: row.get(5)?,
+            collections: split(row.get(6)?),
+            people: split(row.get(7)?),
+        })
+    })?;
+
+    Ok(rows.collect::<rusqlite::Result<Vec<OrganizeRow>>>()?)
+}
+
 // ---------------------------------------------------------------------------
 // Activity
 // ---------------------------------------------------------------------------
@@ -1388,6 +1688,34 @@ pub fn search_fts(
         Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
     })?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Files matching a substring of a name, path, title or person's name.
+///
+/// The safety net under token search. The index matches whole words and their
+/// prefixes, which is what makes it fast; this catches the middle of a word
+/// ("rror" inside "error"), a name typed with different spacing, and a person
+/// whose name was added after their photographs were indexed. Deliberately not
+/// the first thing tried: a substring scan is slower and less precise, so it
+/// only runs when the index found nothing.
+pub fn search_substring(conn: &Connection, needle: &str, limit: i64) -> AppResult<Vec<String>> {
+    let lowered = needle.to_lowercase();
+    let mut statement = conn.prepare(
+        "SELECT f.id FROM files f
+         WHERE f.index_state <> 'missing'
+           AND (lower(f.name) LIKE ?1
+                OR lower(f.folder_path) LIKE ?1
+                OR lower(COALESCE(f.generated_title, '')) LIKE ?1
+                OR lower(COALESCE(f.description, '')) LIKE ?1
+                OR EXISTS (SELECT 1 FROM faces fa JOIN people pe ON pe.id = fa.person_id
+                           WHERE fa.file_id = f.id
+                             AND lower(COALESCE(pe.label, '')) LIKE ?1))
+         LIMIT ?2",
+    )?;
+    let rows = statement.query_map(params![format!("%{lowered}%"), limit], |row| {
+        row.get::<_, String>(0)
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
 }
 
 /// A candidate file for related-file scoring.

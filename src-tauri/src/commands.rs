@@ -9,22 +9,26 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db;
+use crate::dna;
 use crate::error::{AppError, AppResult};
+use crate::organize::{self, OrganizePlan, OrganizeReport};
 use crate::index;
 use crate::models::{
-    ActivityEntry, ArchiveCollection, ArchiveSnapshot, ArchiveTotals, FileFace, FilePage, FileQuery,
-    FileRecord, Folder, IndexStatus, ModelBundle, ModelStatus, PeopleSnapshot, Person, Project,
-    SearchHit, SearchQuery, SearchResponse, StorageStats, Tag,
+    ActivityEntry, ArchiveCollection, ArchiveSnapshot, ArchiveTotals, BuildInfo, FileFace, FilePage,
+    FileQuery, FileRecord, FileVersion, Folder, ImageDna, IndexStatus, ModelBundle, ModelStatus,
+    PeopleSnapshot, Person, Project, SearchHit, SearchQuery, SearchResponse, StorageStats, Tag,
 };
 use crate::people;
 use crate::pipeline;
 use crate::search::Retrieval;
 use crate::service;
 use crate::state::AppState;
+use crate::supervisor::{self, Supervisor};
 use crate::thumbs;
+use crate::versions;
 use crate::watcher;
 
 type SharedState<'a> = State<'a, Arc<AppState>>;
@@ -408,6 +412,32 @@ pub fn save_settings(state: SharedState<'_>, patch: serde_json::Value) -> AppRes
             db::set_setting(&conn, "llm_enabled", if value { "true" } else { "false" })?;
             state.llm_enabled.store(value, Ordering::Relaxed);
         }
+        if let Some(value) = patch.get("llmModel").and_then(|value| value.as_str()) {
+            db::set_setting(&conn, "llm_model", value)?;
+            if let Ok(mut slot) = state.llm_model.lock() {
+                *slot = value.to_string();
+            }
+        }
+        // Whether a new file is enough to start indexing on its own. This used
+        // to be wired to `localProcessing`, which turned the whole local
+        // pipeline off — including the models — under the name of a switch
+        // about background watching. They are separate promises and are kept
+        // separate here.
+        if let Some(value) = patch.get("autoIndex").and_then(|value| value.as_bool()) {
+            db::set_setting(&conn, "auto_index", if value { "true" } else { "false" })?;
+            state.auto_index.store(value, Ordering::Relaxed);
+        }
+        if let Some(value) = patch
+            .get("indexOnBattery")
+            .and_then(|value| value.as_bool())
+        {
+            db::set_setting(
+                &conn,
+                "index_on_battery",
+                if value { "true" } else { "false" },
+            )?;
+            state.index_on_battery.store(value, Ordering::Relaxed);
+        }
     }
     Ok(())
 }
@@ -542,6 +572,185 @@ pub fn create_collection(state: SharedState<'_>, name: String) -> AppResult<Arch
 pub fn delete_collection(state: SharedState<'_>, collection_id: String) -> AppResult<()> {
     let conn = state.db()?;
     db::delete_collection(&conn, &collection_id)
+}
+
+/// Rename a collection without touching a single file.
+///
+/// A collection is a view over the index, so this changes a label and nothing
+/// else — the files inside it keep their names, their paths and their tags.
+#[tauri::command]
+pub fn rename_collection(
+    state: SharedState<'_>,
+    collection_id: String,
+    name: String,
+) -> AppResult<()> {
+    let conn = state.db()?;
+    db::rename_collection(&conn, &collection_id, &name)
+}
+
+/// What this machine can say about one picture.
+///
+/// The row's own facts come from the scan; everything else is measured from the
+/// pixels here, on this machine, with no model and no network. A file that has
+/// never changed has no versions and no history — and says so by returning an
+/// empty list rather than an error.
+#[tauri::command]
+pub async fn image_dna(state: SharedState<'_>, file_id: String) -> AppResult<ImageDna> {
+    let (record, stamp) = {
+        let conn = state.db()?;
+        let record = db::file_by_id(&conn, &file_id)?
+            .ok_or_else(|| AppError::NotFound("that file is not in the archive".to_string()))?;
+        // The fingerprint an edit moves. Measuring again after one is the point.
+        let stamp = format!(
+            "{}:{}",
+            record.modified_at,
+            record.hash.clone().unwrap_or_default()
+        );
+        if let Ok(cache) = state.dna_cache.lock() {
+            if let Some((cached, dna)) = cache.get(&file_id) {
+                if *cached == stamp {
+                    return Ok(dna.clone());
+                }
+            }
+        }
+        (record, stamp)
+    };
+
+    // Prefer the file itself. A format this machine cannot decode — or a video,
+    // which has no still to decode at all — still has the frame the pipeline
+    // already wrote, and measuring that is honest as long as the answer says
+    // which picture it came from.
+    let mut reason = None;
+    let analysis = match dna::analyse(Path::new(&record.path)) {
+        Ok(analysis) => Some(analysis),
+        Err(error) => {
+            let fallback = record
+                .preview_path
+                .as_deref()
+                .and_then(|path| dna::analyse(Path::new(path)).ok());
+            reason = Some(if fallback.is_some() {
+                "Measured from the indexed frame, not the original file".to_string()
+            } else {
+                error
+            });
+            fallback
+        }
+    };
+
+    let aspect = match (record.width, record.height) {
+        (Some(width), Some(height)) if height > 0 => {
+            Some((width as f64 / height as f64 * 100.0).round() / 100.0)
+        }
+        _ => None,
+    };
+    let orientation = match (record.width, record.height) {
+        (Some(width), Some(height)) if width > 0 && height > 0 => Some(
+            if width > height {
+                "landscape"
+            } else if height > width {
+                "portrait"
+            } else {
+                "square"
+            }
+            .to_string(),
+        ),
+        _ => None,
+    };
+
+    let dna = ImageDna {
+        file_id: record.id.clone(),
+        width: record.width,
+        height: record.height,
+        aspect,
+        orientation,
+        format: if record.ext.is_empty() {
+            record.mime.clone()
+        } else {
+            record
+                .ext
+                .trim_start_matches('.')
+                .to_uppercase()
+        },
+        bytes: record.bytes,
+        created_at: record.created_at.clone(),
+        modified_at: record.modified_at.clone(),
+        decoded: analysis.is_some(),
+        reason,
+        palette: analysis
+            .as_ref()
+            .map(|measured| measured.palette.clone())
+            .unwrap_or_default(),
+        brightness: analysis.as_ref().map(|measured| measured.brightness),
+        contrast: analysis.as_ref().map(|measured| measured.contrast),
+        sharpness: analysis.as_ref().map(|measured| measured.sharpness),
+        saturation: analysis.as_ref().map(|measured| measured.saturation),
+        temperature: analysis
+            .as_ref()
+            .map(|measured| measured.temperature().to_string()),
+        temperature_shift: analysis
+            .as_ref()
+            .map(|measured| measured.temperature_shift),
+        objects: record.labels.clone(),
+    };
+
+    if let Ok(mut cache) = state.dna_cache.lock() {
+        cache.insert(file_id, (stamp, dna.clone()));
+    }
+    Ok(dna)
+}
+
+/// Every kept copy of one file, newest content first.
+#[tauri::command]
+pub async fn file_versions(state: SharedState<'_>, file_id: String) -> AppResult<Vec<FileVersion>> {
+    let conn = state.db()?;
+    let versions = db::list_versions(&conn, &file_id)?;
+    let mut live = Vec::with_capacity(versions.len());
+    for version in versions {
+        // A copy removed from the app-data folder by hand is not a version the
+        // interface should offer to open, and leaving its row behind would grow
+        // the table for ever.
+        if Path::new(&version.path).is_file() {
+            live.push(version);
+        } else {
+            db::delete_version(&conn, &version.id)?;
+        }
+    }
+    Ok(live)
+}
+
+/// Keep the current presentation of a file as a version.
+#[tauri::command]
+pub async fn capture_version(
+    state: SharedState<'_>,
+    file_id: String,
+) -> AppResult<FileVersion> {
+    let conn = state.db()?;
+    let version = versions::capture(&conn, &state.thumbnail_dir, &file_id)?;
+    let name = conn
+        .query_row(
+            "SELECT name FROM files WHERE id = ?1",
+            rusqlite::params![file_id],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| "a file".to_string());
+    db::push_activity(
+        &conn,
+        "collection",
+        "Kept a version for comparison",
+        Some(name.as_str()),
+        Some(file_id.as_str()),
+    )?;
+    Ok(version)
+}
+
+/// Forget one kept copy, on disk and in the index.
+#[tauri::command]
+pub async fn delete_version(state: SharedState<'_>, version_id: String) -> AppResult<()> {
+    let conn = state.db()?;
+    let version = db::version_by_id(&conn, &version_id)?
+        .ok_or_else(|| AppError::NotFound("that version is no longer kept".to_string()))?;
+    versions::discard(&version.path);
+    db::delete_version(&conn, &version_id)
 }
 
 #[tauri::command]
@@ -747,10 +956,13 @@ pub fn apply_settings(state: &Arc<AppState>) {
             db::get_setting(&conn, "service_enabled").ok().flatten(),
             db::get_setting(&conn, "semantic_search").ok().flatten(),
             db::get_setting(&conn, "llm_enabled").ok().flatten(),
+            db::get_setting(&conn, "llm_model").ok().flatten(),
+            db::get_setting(&conn, "auto_index").ok().flatten(),
+            db::get_setting(&conn, "index_on_battery").ok().flatten(),
         )
     });
 
-    let Some((port, enabled, semantic, llm)) = settings else {
+    let Some((port, enabled, semantic, llm, llm_model, auto_index, on_battery)) = settings else {
         return;
     };
     if let Some(port) = port.and_then(|value| value.parse::<u16>().ok()) {
@@ -764,6 +976,17 @@ pub fn apply_settings(state: &Arc<AppState>) {
     }
     if let Some(llm) = llm {
         state.llm_enabled.store(llm == "true", Ordering::Relaxed);
+    }
+    if let Some(model) = llm_model {
+        if let Ok(mut slot) = state.llm_model.lock() {
+            *slot = model;
+        }
+    }
+    if let Some(auto) = auto_index {
+        state.auto_index.store(auto != "false", Ordering::Relaxed);
+    }
+    if let Some(battery) = on_battery {
+        state.index_on_battery.store(battery == "true", Ordering::Relaxed);
     }
 }
 
@@ -917,9 +1140,18 @@ pub fn scan_faces(app: AppHandle, state: SharedState<'_>) -> AppResult<i64> {
 }
 
 /// What the model store holds, and what it would cost to complete it.
+///
+/// The three ways this can come back empty are kept apart, because they need
+/// three different things from the person reading it: turn a setting on, press
+/// a button, or install something. Folding them into "unavailable" is how a
+/// download button ends up looking broken when the truth is that no service was
+/// running to download into.
 #[tauri::command]
-pub async fn model_status(state: SharedState<'_>) -> AppResult<ModelStatus> {
+pub async fn model_status(app: AppHandle, state: SharedState<'_>) -> AppResult<ModelStatus> {
     let enabled = state.service_enabled.load(Ordering::Relaxed);
+    let on_battery = state.on_battery.load(Ordering::Relaxed);
+    let can_start = supervisor::can_start(&app);
+
     if !enabled {
         return Ok(ModelStatus {
             bundles: Vec::new(),
@@ -927,6 +1159,8 @@ pub async fn model_status(state: SharedState<'_>) -> AppResult<ModelStatus> {
             missing_megabytes: 0.0,
             directory: None,
             reason: Some("local processing is turned off in settings".into()),
+            can_start: false,
+            on_battery,
         });
     }
 
@@ -937,7 +1171,13 @@ pub async fn model_status(state: SharedState<'_>) -> AppResult<ModelStatus> {
             available: false,
             missing_megabytes: 0.0,
             directory: None,
-            reason: Some("the local indexing service is not running".into()),
+            reason: Some(if can_start {
+                "the local indexing service is not running yet".into()
+            } else {
+                "no local indexer is installed on this machine".into()
+            }),
+            can_start,
+            on_battery,
         });
     };
 
@@ -970,6 +1210,190 @@ pub async fn model_status(state: SharedState<'_>) -> AppResult<ModelStatus> {
             .and_then(|v| v.as_str())
             .map(str::to_string),
         reason: None,
+        can_start,
+        on_battery,
+    })
+}
+
+/// Start the local indexer now, and say what happened.
+///
+/// It is normally started in the background at launch, but that can lose a race
+/// against a slow machine — and a person looking at "not running" deserves a
+/// button rather than a wait. Blocking work, so it runs off the main thread.
+#[tauri::command]
+pub async fn start_service(app: AppHandle, state: SharedState<'_>) -> AppResult<String> {
+    let supervisor = app
+        .try_state::<Arc<Supervisor>>()
+        .map(|value| value.inner().clone())
+        .ok_or_else(|| AppError::Other("the indexer supervisor is not running".into()))?;
+    let handle = shared(&state);
+    let app_handle = app.clone();
+
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        supervisor::ensure(&app_handle, &handle, &supervisor)
+    })
+    .await
+    .map_err(|error| AppError::Other(format!("could not start the indexer: {error}")))?;
+
+    if outcome.started {
+        Ok(outcome.detail)
+    } else {
+        Err(AppError::Other(outcome.detail))
+    }
+}
+
+/// Let the webview read one original file, so it can play or render it.
+///
+/// The asset protocol is scoped to the thumbnail folder, and that scope is a
+/// security boundary: everything inside it can be read by the interface, and
+/// everything outside it cannot. Photographs do not need more — the pipeline
+/// already produced a preview — but a video has to be streamed and a PDF has to
+/// be laid out, and neither is something a 1600px JPEG can stand in for.
+///
+/// So access is granted one file at a time, for the file the user actually
+/// opened, and only after checking that the path is a file this archive knows
+/// about. A directory is never added: a single grant is revoked by the end of
+/// the process and cannot be walked to reach anything else.
+#[tauri::command]
+pub fn grant_file_access(
+    app: AppHandle,
+    state: SharedState<'_>,
+    file_id: String,
+) -> AppResult<String> {
+    let path = {
+        let conn = state.db()?;
+        db::file_path(&conn, &file_id)?
+            .ok_or_else(|| AppError::NotFound("that file is not in the archive".into()))?
+    };
+
+    let target = Path::new(&path);
+    if !target.is_file() {
+        return Err(AppError::NotFound(
+            "that file is no longer where the index last saw it".into(),
+        ));
+    }
+
+    app.asset_protocol_scope()
+        .allow_file(target)
+        .map_err(|error| AppError::Other(format!("could not open that file: {error}")))?;
+
+    Ok(path)
+}
+
+/// Where every indexed file would go if the archive filed the disk its own way.
+///
+/// Read-only. The renderer shows this before offering to apply it, because the
+/// operation moves the user's own files and a plan they have not seen is not a
+/// plan, it is a surprise.
+#[tauri::command]
+pub fn organize_plan(state: SharedState<'_>, destination: String) -> AppResult<OrganizePlan> {
+    let root = PathBuf::from(shellexpand(&destination));
+    if root.as_os_str().is_empty() {
+        return Err(AppError::Config("choose a folder to organize into".into()));
+    }
+    if root.is_file() {
+        return Err(AppError::Config(format!(
+            "{} is a file, not a folder",
+            root.display()
+        )));
+    }
+
+    let conn = state.db()?;
+    organize::plan(&conn, &root)
+}
+
+/// Move the files. The one command here that changes the user's disk.
+///
+/// The folder the files land in becomes a watched folder, so the archive keeps
+/// knowing about what it just moved instead of losing track of it — and the
+/// watcher is rebuilt before the call returns, so a file edited a second later
+/// is still seen.
+#[tauri::command]
+pub fn organize_apply(
+    app: AppHandle,
+    state: SharedState<'_>,
+    destination: String,
+) -> AppResult<OrganizeReport> {
+    let root = PathBuf::from(shellexpand(&destination));
+    if root.as_os_str().is_empty() {
+        return Err(AppError::Config("choose a folder to organize into".into()));
+    }
+
+    let report = {
+        let conn = state.db()?;
+        let report = organize::apply(&conn, &root)?;
+        if report.moved > 0 {
+            db::push_activity(
+                &conn,
+                "organized",
+                &format!(
+                    "Filed {} files into {} as {} folder{}",
+                    report.moved,
+                    root.display(),
+                    report.folders.len(),
+                    if report.folders.len() == 1 { "" } else { "s" }
+                ),
+                Some(&root.to_string_lossy()),
+                None,
+            )?;
+        }
+        report
+    };
+
+    restore_watchers(&app, state.inner())?;
+    let _ = app.emit("archive://folders", ());
+    let _ = app.emit("archive://changed", "files");
+    log::info!(
+        "organized {} files into {} ({} could not be moved)",
+        report.moved,
+        root.display(),
+        report.failed.len()
+    );
+    Ok(report)
+}
+
+/// Which build this is, and where it keeps everything.
+///
+/// Two installers of the same application look identical on screen, so the only
+/// honest way to answer "did my new build install?" is to have the running
+/// binary describe itself. Every value here is read from the executable or the
+/// filesystem at call time.
+#[tauri::command]
+pub fn build_info(app: AppHandle, state: SharedState<'_>) -> AppResult<BuildInfo> {
+    let executable = std::env::current_exe().ok();
+    let built_at = executable
+        .as_ref()
+        .and_then(|path| std::fs::metadata(path).ok())
+        .and_then(|meta| meta.modified().ok())
+        .map(db::timestamp);
+
+    let bundled_indexer = app
+        .path()
+        .resource_dir()
+        .map(|dir| {
+            let name = if cfg!(windows) {
+                "afterimage-indexer.exe"
+            } else {
+                "afterimage-indexer"
+            };
+            dir.join("indexer").join(name).exists()
+        })
+        .unwrap_or(false);
+
+    let data_dir = state.app_data.to_string_lossy().to_string();
+    Ok(BuildInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        built_at,
+        executable: executable.map(|path| path.to_string_lossy().to_string()),
+        data_dir,
+        thumbnails_dir: state.thumbnail_dir.to_string_lossy().to_string(),
+        database: state
+            .app_data
+            .join("afterimage.sqlite")
+            .to_string_lossy()
+            .to_string(),
+        bundled_indexer,
+        on_battery: state.on_battery.load(Ordering::Relaxed),
     })
 }
 
@@ -991,10 +1415,35 @@ pub fn install_models(
     let port = state.service_port.load(Ordering::Relaxed);
     let handle = shared(&state);
     let app_handle = app.clone();
+    let supervisor = app.try_state::<Arc<Supervisor>>().map(|value| value.inner().clone());
 
     std::thread::Builder::new()
         .name("afterimage-models".into())
         .spawn(move || {
+            // A download without a service to download into is the failure this
+            // command is most likely to hit, and the one the interface used to
+            // report as "the service did not answer". Start it and try properly:
+            // waiting for a background launch that may already have given up is
+            // not something the person who pressed the button can see.
+            if !service::is_up(port) {
+                if let Some(supervisor) = &supervisor {
+                    let _ = app_handle.emit(
+                        "archive://notice",
+                        "info|Starting the local indexing service before downloading…",
+                    );
+                    let outcome = supervisor::ensure(&app_handle, &handle, supervisor);
+                    log::info!("indexer (on demand, for models): {}", outcome.detail);
+                    if !outcome.started && !service::is_up(port) {
+                        let _ = app_handle.emit(
+                            "archive://notice",
+                            format!("error|{}", outcome.detail),
+                        );
+                        let _ = app_handle.emit("archive://models", "done");
+                        return;
+                    }
+                }
+            }
+
             match service::ensure_models(port, &bundles) {
                 Some(value) => {
                     let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);

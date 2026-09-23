@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react';
 import type { ArchiveFile, FileKind } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { KIND_EMPTY, KIND_ICON } from '@/stores/selectors';
+import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
 import { EmptyState } from '@/components/common/EmptyState';
 import { SkeletonCard } from '@/components/common/Skeleton';
@@ -48,6 +49,7 @@ export function FileGrid({
 }) {
   const selectedIds = useUIStore((state) => state.selectedFileIds);
   const openFile = useArchiveStore((state) => state.openFile);
+  const showMeta = useSettingsStore((state) => state.showThumbnailMeta);
   const order = useMemo(() => files.map((file) => file.id), [files]);
 
   const handleOpen = onOpen ?? ((file: ArchiveFile) => void openFile(file.id));
@@ -95,6 +97,7 @@ export function FileGrid({
           key={file.id}
           file={file}
           order={order}
+          showMeta={showMeta}
           selected={selectedIds.includes(file.id)}
           onOpen={handleOpen}
         />

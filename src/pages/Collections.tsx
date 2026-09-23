@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { AssetImage } from '@/components/common/AssetImage';
 import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Overlay';
+import { PromptDialog } from '@/components/common/PromptDialog';
 import { Tooltip } from '@/components/common/Tooltip';
 import { FileViews } from '@/components/files/FileViews';
 
@@ -53,10 +54,13 @@ export function Collections() {
   const setActiveCollection = useUIStore((state) => state.setActiveCollection);
   const beginDraft = useCollectionStore((state) => state.beginDraft);
   const deleteCollection = useArchiveStore((state) => state.deleteCollection);
+  const renameCollection = useArchiveStore((state) => state.renameCollection);
   const [sort] = useState<'recent'>('recent');
   // Deleting a collection is a delete of a *view*, never of the files in it, so
   // the confirmation says so rather than warning about data loss.
   const [doomed, setDoomed] = useState<ArchiveCollection | null>(null);
+  // Renaming is the same kind of change: a label moves and nothing else does.
+  const [renaming, setRenaming] = useState<ArchiveCollection | null>(null);
 
   const active = collections.find((collection) => collection.id === activeId) ?? null;
   const result = useFileQuery(active ? { collectionId: active.id, sort } : null);
@@ -151,17 +155,29 @@ export function Collections() {
 
                 {/* Outside the card's own button, because a button inside a
                     button is not something a browser will honour. */}
-                <Tooltip label="Delete collection" side="left">
-                  <IconButton
-                    label={`Delete ${collection.name}`}
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setDoomed(collection)}
-                    className="absolute right-1.5 top-1.5 opacity-0 transition-opacity duration-150 focus-visible:opacity-100 group-hover/col:opacity-100 hover:text-critical"
-                  >
-                    <Icon name="Trash2" size={14} strokeWidth={1.9} />
-                  </IconButton>
-                </Tooltip>
+                <div className="absolute right-1.5 top-1.5 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/col:opacity-100">
+                  <Tooltip label="Rename collection" side="bottom">
+                    <IconButton
+                      label={`Rename ${collection.name}`}
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setRenaming(collection)}
+                    >
+                      <Icon name="Pencil" size={14} strokeWidth={1.9} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip label="Delete collection" side="left">
+                    <IconButton
+                      label={`Delete ${collection.name}`}
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setDoomed(collection)}
+                      className="hover:text-critical"
+                    >
+                      <Icon name="Trash2" size={14} strokeWidth={1.9} />
+                    </IconButton>
+                  </Tooltip>
+                </div>
               </div>
             );
           })}
@@ -170,12 +186,33 @@ export function Collections() {
 
       {active && (
         <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-baseline gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-ink">{active.name}</h2>
             <span className="text-meta tabular-nums text-ink-3">
               {formatCount(result.total)} files
             </span>
             <span className="text-2xs text-ink-3">· {ruleText(active)}</span>
+            <span className="ml-auto flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon="Pencil"
+                onClick={() => setRenaming(active)}
+              >
+                Rename
+              </Button>
+              <Tooltip label="Delete collection" side="left">
+                <IconButton
+                  label={`Delete ${active.name}`}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setDoomed(active)}
+                  className="hover:text-critical"
+                >
+                  <Icon name="Trash2" size={14} strokeWidth={1.9} />
+                </IconButton>
+              </Tooltip>
+            </span>
           </div>
           <FileViews
             result={result}
@@ -190,6 +227,19 @@ export function Collections() {
           Collections are views over the index — they never move or copy files on disk.
         </p>
       )}
+
+      <PromptDialog
+        open={renaming !== null}
+        title="Rename collection"
+        description="A collection is a view over the index, so this changes a label and nothing else — the files inside keep their names, paths and tags."
+        initialValue={renaming?.name ?? ''}
+        placeholder="Collection name"
+        confirmLabel="Rename"
+        onConfirm={(name) => {
+          if (renaming) void renameCollection(renaming.id, name);
+        }}
+        onClose={() => setRenaming(null)}
+      />
 
       <Modal open={doomed !== null} onClose={() => setDoomed(null)} className="max-w-[440px]">
         <div className="p-5">

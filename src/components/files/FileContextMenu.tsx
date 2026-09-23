@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ContextMenuItem } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useCollectionStore } from '@/stores/collections';
@@ -7,71 +7,10 @@ import { useUIStore } from '@/stores/ui';
 import { cn, splitExtension } from '@/utils/format';
 import { ContextMenu } from '@/components/common/ContextMenu';
 import { Modal } from '@/components/common/Overlay';
+import { PromptDialog } from '@/components/common/PromptDialog';
 import { Icon } from '@/components/common/Icon';
 import { Button } from '@/components/common/Button';
 import { TagPill } from '@/components/common/Badge';
-
-/** Small, reusable prompt used for rename and tag entry. */
-function PromptDialog({
-  open,
-  title,
-  description,
-  initialValue,
-  placeholder,
-  confirmLabel,
-  onConfirm,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  description?: string;
-  initialValue?: string;
-  placeholder?: string;
-  confirmLabel: string;
-  onConfirm: (value: string) => void;
-  onClose: () => void;
-  children?: React.ReactNode;
-}) {
-  const [value, setValue] = useState(initialValue ?? '');
-
-  useEffect(() => {
-    if (open) setValue(initialValue ?? '');
-  }, [open, initialValue]);
-
-  return (
-    <Modal open={open} onClose={onClose} className="max-w-[420px]">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!value.trim()) return;
-          onConfirm(value.trim());
-          onClose();
-        }}
-        className="p-5"
-      >
-        <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
-        {description && <p className="mt-1 text-meta text-ink-2">{description}</p>}
-        <input
-          autoFocus
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          placeholder={placeholder}
-          className="mt-4 h-10 w-full rounded-input border border-line-strong bg-surface px-3 text-body text-ink outline-none transition-colors focus:border-line-strong"
-        />
-        {children}
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" size="sm" disabled={!value.trim()}>
-            {confirmLabel}
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 
 /**
  * One context menu instance for the whole app.
@@ -98,6 +37,7 @@ export function FileContextMenu() {
   const toggleCollection = useCollectionStore((state) => state.toggleFile);
 
   const setSimilarFor = useUIStore((state) => state.setSimilarFor);
+  const setComparisonFor = useUIStore((state) => state.setComparisonFor);
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
@@ -135,6 +75,14 @@ export function FileContextMenu() {
         })),
       },
       { id: 'tag', label: 'Add tag…', icon: 'Tag' },
+      // A comparison needs two states of the same picture, so a file with no
+      // presentation copy has nothing to put side by side.
+      {
+        id: 'compare',
+        label: 'Compare before and after…',
+        icon: 'Columns2',
+        disabled: !file.previewPath,
+      },
       { id: 'similar', label: 'Find similar', icon: 'Layers', disabled: !file.embeddingState || file.embeddingState === 'unavailable' },
       {
         id: 'favorite',
@@ -179,6 +127,9 @@ export function FileContextMenu() {
         break;
       case 'tag':
         setTagOpen(true);
+        break;
+      case 'compare':
+        setComparisonFor(file.id);
         break;
       case 'similar':
         setSimilarFor(file.id);

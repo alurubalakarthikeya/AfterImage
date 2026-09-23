@@ -615,7 +615,26 @@ pub fn rename(conn: &Connection, person_id: &str, label: Option<&str>) -> AppRes
         "UPDATE people SET label = ?2, updated_at = ?3 WHERE id = ?1",
         params![person_id, clean, crate::db::now()],
     )?;
+    reindex_person_files(conn, person_id)?;
     Ok(())
+}
+
+/// Rewrite the search rows of every file this person appears in.
+///
+/// A person's name is part of what a search matches, and it lives nowhere near
+/// the files: naming a group has to reach the index that already exists, or the
+/// name only starts working after the next full scan. Runs for a rename and for
+/// a merge, because both change which names belong to which file.
+pub fn reindex_person_files(conn: &Connection, person_id: &str) -> AppResult<usize> {
+    let file_ids = {
+        let mut statement = conn.prepare("SELECT DISTINCT file_id FROM faces WHERE person_id = ?1")?;
+        let rows = statement.query_map(params![person_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<String>>>()?
+    };
+    for file_id in &file_ids {
+        crate::db::reindex_search_row(conn, file_id)?;
+    }
+    Ok(file_ids.len())
 }
 
 /// Delete a group, and the faces that identified it.
@@ -681,6 +700,9 @@ pub fn merge(conn: &Connection, from_id: &str, into_id: &str) -> AppResult<()> {
     tx.execute("DELETE FROM people WHERE id = ?1", params![from_id])?;
     rebuild_centroid(&tx, into_id)?;
     tx.commit()?;
+    // After the transaction, not inside it: the index is a separate table and a
+    // merge that half-reindexed would be worse than one that did not at all.
+    reindex_person_files(conn, into_id)?;
     Ok(())
 }
 

@@ -13,17 +13,21 @@
 
 mod commands;
 mod db;
+mod dna;
 mod error;
 mod index;
 mod models;
+mod organize;
 mod people;
 mod pipeline;
+mod power;
 mod scan;
 mod search;
 mod service;
 mod state;
 mod supervisor;
 mod thumbs;
+mod versions;
 mod watcher;
 
 use std::sync::atomic::Ordering;
@@ -169,8 +173,13 @@ pub fn run() {
             commands::remove_tag,
             commands::create_collection,
             commands::delete_collection,
+            commands::rename_collection,
             commands::add_to_collection,
             commands::remove_from_collection,
+            commands::image_dna,
+            commands::file_versions,
+            commands::capture_version,
+            commands::delete_version,
             commands::create_project,
             commands::delete_project,
             commands::set_file_project,
@@ -190,6 +199,11 @@ pub fn run() {
             commands::scan_faces,
             commands::model_status,
             commands::install_models,
+            commands::start_service,
+            commands::grant_file_access,
+            commands::organize_plan,
+            commands::organize_apply,
+            commands::build_info,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

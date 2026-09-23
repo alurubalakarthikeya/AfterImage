@@ -3,8 +3,11 @@ import { cn } from '@/utils/format';
 /**
  * The AfterImage mark: three offset apertures, the last one resolving.
  *
- * Geometric, no gradient, no glow — the visual shorthand for "layered frames
- * that remember what passed through them".
+ * This is the artwork the desktop icon is drawn from — `scripts/generate-icons.mjs`
+ * carries the same geometry — and it is deliberately not rendered anywhere in
+ * the interface any more. Screens that showed a glyph beside the name now show
+ * the name: at 21 pixels the mark was a smudge, and the word is the thing people
+ * actually read.
  */
 export function LogoMark({ size = 28, className }: { size?: number; className?: string }) {
   return (
@@ -31,24 +34,41 @@ export function LogoMark({ size = 28, className }: { size?: number; className?: 
   );
 }
 
+/**
+ * The wordmark.
+ *
+ * The name, at the size the place it sits in calls for. The product's identity
+ * is three lines of text in the corner of a window that is otherwise all
+ * pictures; a miniature logo competing with them was the one thing on the
+ * screen with nothing to say.
+ */
 export function Logo({
   className,
   compact = false,
+  size = 'md',
 }: {
   className?: string;
+  /** Name only, with no tagline underneath. */
   compact?: boolean;
+  size?: 'sm' | 'md' | 'lg';
 }) {
+  const typeface = {
+    sm: 'text-body',
+    md: 'text-[15px]',
+    lg: 'text-card',
+  }[size];
+
   return (
-    <div className={cn('flex items-center gap-2.5', className)}>
-      <LogoMark size={compact ? 26 : 30} />
-      {!compact && (
-        <div className="min-w-0">
-          <div className="text-[15px] font-semibold leading-tight tracking-[-0.02em] text-ink">
-            AfterImage
-          </div>
-          <div className="text-meta leading-tight text-ink-2">Your Digital Archive</div>
-        </div>
-      )}
+    <div className={cn('flex flex-col', className)}>
+      <span
+        className={cn(
+          'truncate font-semibold leading-tight tracking-[-0.02em] text-ink',
+          typeface,
+        )}
+      >
+        AfterImage
+      </span>
+      {!compact && <span className="text-meta leading-tight text-ink-2">Your Digital Archive</span>}
     </div>
   );
 }

@@ -46,6 +46,8 @@ export interface UIState {
   activePersonId: string | null;
   /** File whose "find similar" results should be shown in the inspector. */
   similarFor: string | null;
+  /** File whose kept versions are being compared, before against after. */
+  comparisonFor: string | null;
 
   navigate: (route: RouteId) => void;
   /** Opens one person's photos. Sets the route, so callers pass only an id. */
@@ -73,6 +75,7 @@ export interface UIState {
   setActiveCollection: (collectionId: string | null) => void;
   setActiveProject: (projectId: string | null) => void;
   setSimilarFor: (fileId: string | null) => void;
+  setComparisonFor: (fileId: string | null) => void;
   /** Close whatever overlay is open; returns true when something was closed. */
   dismissTop: () => boolean;
 }
@@ -99,6 +102,7 @@ export const useUIStore = create<UIState>()((set, get) => ({
   activeProjectId: null,
   activePersonId: null,
   similarFor: null,
+  comparisonFor: null,
 
   navigate: (route) => {
     const current = get().route;
@@ -156,8 +160,10 @@ export const useUIStore = create<UIState>()((set, get) => ({
         selectedFileIds,
         inspectorOpen: true,
         contextMenu: null,
-        // Selecting a different file leaves "find similar" mode.
+        // Selecting a different file leaves "find similar" mode, and closes a
+        // comparison that belongs to the file that is no longer selected.
         similarFor: state.similarFor === fileId ? state.similarFor : null,
+        comparisonFor: state.comparisonFor === fileId ? state.comparisonFor : null,
       };
     }),
 
@@ -196,6 +202,10 @@ export const useUIStore = create<UIState>()((set, get) => ({
   // Visual similarity is a panel over the current page rather than a nav item:
   // the question it answers is always "like this one", which needs a subject.
   setSimilarFor: (similarFor) => set({ similarFor }),
+  // The same reasoning for comparison, with one addition: comparing is done in
+  // files, so selecting another file while it is open leaves the view rather
+  // than silently swapping the subject under the divider.
+  setComparisonFor: (comparisonFor) => set({ comparisonFor }),
 
   dismissTop: () => {
     const state = get();
@@ -209,6 +219,10 @@ export const useUIStore = create<UIState>()((set, get) => ({
     }
     if (state.quickLookOpen) {
       set({ quickLookOpen: false });
+      return true;
+    }
+    if (state.comparisonFor) {
+      set({ comparisonFor: null });
       return true;
     }
     if (state.similarFor) {

@@ -20,7 +20,13 @@
 //! The child is owned by this process: when the window closes, the service is
 //! stopped with it, so there is never an orphaned Python process holding the
 //! port.
+//!
+//! Everything the child prints goes to `indexer.log` in the application's own
+//! folder. Nothing reads that file back: it exists because a service that fails
+//! to start is the one thing here a user cannot diagnose by looking at the
+//! window, and an empty log is a far worse answer than a loud one.
 
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -88,6 +94,29 @@ pub struct StartOutcome {
     pub detail: String,
 }
 
+/// How long to give a cold service before calling it a failure.
+///
+/// Importing torch, onnxruntime and the OCR engine is the expensive part of a
+/// first start, and on a cold page cache it comfortably outlasts the twenty
+/// seconds this used to allow — which reported a failure for a service that was
+/// three seconds away from answering.
+const READY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Where the child's output goes.
+fn log_path(app_data: &Path) -> PathBuf {
+    app_data.join("indexer.log")
+}
+
+/// True when an indexer is available to run at all, without starting one.
+///
+/// The interface uses this to tell "nothing is installed" from "nothing is
+/// running yet": only the second one is worth offering a button for.
+pub fn can_start(app: &AppHandle) -> bool {
+    launch_commands(app, 0)
+        .into_iter()
+        .any(|(program, _)| program.exists())
+}
+
 /// Ensure a service is answering, starting one if it has to.
 pub fn ensure(app: &AppHandle, state: &AppState, supervisor: &Supervisor) -> StartOutcome {
     let port = state.service_port.load(std::sync::atomic::Ordering::Relaxed);
@@ -110,25 +139,44 @@ pub fn ensure(app: &AppHandle, state: &AppState, supervisor: &Supervisor) -> Sta
         };
     }
 
+    let log = log_path(&state.app_data);
     let mut last_error = String::new();
     for (program, args) in candidates {
         if !program.exists() {
             continue;
         }
-        match spawn(&program, &args) {
-            Ok(child) => {
-                supervisor.remember(child);
-                if wait_until_ready(port, Duration::from_secs(20)) {
+        match spawn(&program, &args, &log) {
+            Ok(mut child) => match wait_until_ready(port, READY_TIMEOUT, &mut child) {
+                Readiness::Ready => {
+                    supervisor.remember(child);
                     return StartOutcome {
                         started: true,
                         detail: format!("Local indexer started ({})", program.display()),
                     };
                 }
-                last_error = format!(
-                    "{} started but did not answer on port {port} within 20 seconds",
-                    program.display()
-                );
-            }
+                Readiness::Exited(code) => {
+                    let how = match code {
+                        Some(code) => format!("exit code {code}"),
+                        None => "a signal".to_string(),
+                    };
+                    last_error = format!(
+                        "{} stopped with {how} before it answered; its output is in {}",
+                        program.display(),
+                        log.display()
+                    );
+                }
+                Readiness::TimedOut => {
+                    // Still running and still importing, most likely. Keep it:
+                    // `stop()` must be able to end it when the window closes.
+                    supervisor.remember(child);
+                    last_error = format!(
+                        "{} did not answer on port {port} within {} seconds; its output is in {}",
+                        program.display(),
+                        READY_TIMEOUT.as_secs(),
+                        log.display()
+                    );
+                }
+            },
             Err(error) => {
                 last_error = format!("could not start {}: {error}", program.display());
             }
@@ -138,7 +186,9 @@ pub fn ensure(app: &AppHandle, state: &AppState, supervisor: &Supervisor) -> Sta
     StartOutcome {
         started: false,
         detail: if last_error.is_empty() {
-            "No local indexer was found on this machine.".into()
+            "No local indexer is installed on this machine. Files are still indexed, thumbnailed \
+             and searchable; OCR, labels and faces need the Python service."
+                .into()
         } else {
             format!("{last_error}. Files are still indexed and searchable by name and text.")
         },
@@ -219,23 +269,58 @@ fn dev_venv_interpreters() -> Vec<PathBuf> {
     candidates
 }
 
-fn spawn(program: &Path, args: &[String]) -> std::io::Result<Child> {
+/// How a service launch ended.
+enum Readiness {
+    Ready,
+    /// The process ended on its own — a missing module, a taken port, a bad
+    /// interpreter. The exit code is the only thing the window can honestly say
+    /// about it, and the log holds the rest.
+    Exited(Option<i32>),
+    TimedOut,
+}
+
+/// A handle the child can write to: appended, never truncated.
+///
+/// Two runs in one session are more useful than one, and a truncated log at the
+/// moment of a crash would be the cruellest possible time to lose it. Opened
+/// per stream because a `Stdio` cannot be cloned, and because interleaving both
+/// streams into one file is exactly what is wanted when reading it back.
+fn log_sink(log: &Path) -> Stdio {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)
+        .map(Stdio::from)
+        .unwrap_or_else(|_| Stdio::null())
+}
+
+fn spawn(program: &Path, args: &[String], log: &Path) -> std::io::Result<Child> {
     Command::new(program)
         .args(args)
         .current_dir(service_dir())
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(log_sink(log))
+        .stderr(log_sink(log))
         .spawn()
 }
 
-fn wait_until_ready(port: u16, timeout: Duration) -> bool {
+/// Poll the port until it answers, the child dies, or time runs out.
+///
+/// Watching the child matters as much as watching the port: a service that
+/// exits in the first second should be reported in the first second, not ninety
+/// seconds later with the same sentence an import-in-progress would produce.
+fn wait_until_ready(port: u16, timeout: Duration, child: &mut Child) -> Readiness {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if service::is_up(port) {
-            return true;
+            return Readiness::Ready;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => return Readiness::Exited(status.code()),
+            Ok(None) => {}
+            Err(_) => {}
         }
         std::thread::sleep(Duration::from_millis(400));
     }
-    false
+    Readiness::TimedOut
 }

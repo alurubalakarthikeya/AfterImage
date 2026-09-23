@@ -1,5 +1,6 @@
 import type { ArchiveFile } from '@/types';
 import { groupByDay } from '@/stores/selectors';
+import { useSettingsStore } from '@/stores/settings';
 import { formatCount, formatDayLabel, formatClock } from '@/utils/format';
 import { EmptyState } from '@/components/common/EmptyState';
 import { SkeletonRows } from '@/components/common/Skeleton';
@@ -21,6 +22,7 @@ export function FileTimeline({
   loading?: boolean;
 }) {
   const groups = groupByDay(files);
+  const showMeta = useSettingsStore((state) => state.showThumbnailMeta);
 
   if (groups.length === 0) {
     if (loading) return <SkeletonRows rows={8} />;
@@ -48,7 +50,7 @@ export function FileTimeline({
           </div>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
             {group.files.slice(0, 12).map((file) => (
-              <FileCard key={file.id} file={file} onOpen={onOpen} />
+              <FileCard key={file.id} file={file} showMeta={showMeta} onOpen={onOpen} />
             ))}
           </div>
           {group.files.length > 12 && (

@@ -351,7 +351,7 @@ def search_semantic(request: SemanticSearchRequest) -> SemanticSearchResponse:
 @app.post("/query/parse", response_model=ParsedQuery)
 def query_parse(request: QueryRequest) -> ParsedQuery:
     """Turn a sentence into structured criteria, with or without the model."""
-    parsed = llm.parse(request.text)
+    parsed = llm.parse(request.text, request.model)
     return ParsedQuery(
         raw=request.text,
         terms=list(parsed.get("terms") or []),  # type: ignore[arg-type]

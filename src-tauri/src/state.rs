@@ -7,6 +7,7 @@
 //! Every number the interface reads about indexing lives here as an atomic,
 //! written by the worker thread and read on demand — never estimated.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU16, Ordering};
 use std::sync::mpsc::Sender;
@@ -17,10 +18,14 @@ use notify::RecommendedWatcher;
 use notify_debouncer_mini::Debouncer;
 use rusqlite::Connection;
 
+use crate::models::ImageDna;
 use crate::pipeline::Job;
 
 pub struct AppState {
     pub db: Mutex<Connection>,
+    /// Where the application keeps its own files, so the interface can say where
+    /// they are and the supervisor can put the indexer's log beside them.
+    pub app_data: PathBuf,
     pub thumbnail_dir: PathBuf,
     /// Face crops, inside the thumbnail directory rather than beside it.
     ///
@@ -44,6 +49,18 @@ pub struct AppState {
     /// face model is installed every call answers "unavailable" in a few
     /// milliseconds and the file is left on the list for when one is.
     pub faces_enabled: AtomicBool,
+    /// Which local model should interpret a search query, when one is enabled.
+    /// The service picks its own default when this is empty.
+    pub llm_model: Mutex<String>,
+    /// Whether a change on disk is enough to start indexing by itself. Off means
+    /// the watcher still notices — the interface still hears about new files —
+    /// but the work waits until the user asks for it.
+    pub auto_index: AtomicBool,
+    /// Whether the queue may run while the machine is on battery power.
+    pub index_on_battery: AtomicBool,
+    /// The last measured power state. Refreshed by the worker rather than by a
+    /// timer, so a desktop that has never run a job never pays for the query.
+    pub on_battery: AtomicBool,
 
     // Queue counters, mirrored into `IndexStatus` on every change.
     pub queue_total: AtomicI64,
@@ -61,6 +78,15 @@ pub struct AppState {
     /// Why the pipeline cannot do its job, when it cannot.
     pub issue: Mutex<Option<String>>,
 
+    /// Measured picture data, keyed by file id and stamped with the file's own
+    /// fingerprint, so an edit invalidates it.
+    ///
+    /// In memory only, deliberately: measuring a picture costs one decode, and
+    /// the answer is a property of the pixels on disk. Writing it into SQLite
+    /// would make the database hold a second copy of a derived fact that is
+    /// cheaper to recompute than to keep in step.
+    pub dna_cache: Mutex<HashMap<String, (String, ImageDna)>>,
+
     pub jobs: Mutex<Option<Sender<Job>>>,
     pub watcher: Mutex<Option<Debouncer<RecommendedWatcher>>>,
     pub watched: Mutex<Vec<String>>,
@@ -74,6 +100,7 @@ impl AppState {
         let faces_dir = thumbnail_dir.join("faces");
         Self {
             db: Mutex::new(db),
+            app_data: app_data.clone(),
             thumbnail_dir,
             faces_dir,
             service_port: AtomicU16::new(8765),
@@ -81,6 +108,10 @@ impl AppState {
             semantic_enabled: AtomicBool::new(false),
             llm_enabled: AtomicBool::new(false),
             faces_enabled: AtomicBool::new(true),
+            llm_model: Mutex::new(String::new()),
+            auto_index: AtomicBool::new(true),
+            index_on_battery: AtomicBool::new(false),
+            on_battery: AtomicBool::new(false),
             queue_total: AtomicI64::new(0),
             pending: AtomicI64::new(0),
             processing: AtomicI64::new(0),
@@ -93,6 +124,7 @@ impl AppState {
             current_file: Mutex::new(None),
             current_folder: Mutex::new(None),
             issue: Mutex::new(None),
+            dna_cache: Mutex::new(HashMap::new()),
             jobs: Mutex::new(None),
             watcher: Mutex::new(None),
             watched: Mutex::new(Vec::new()),
@@ -120,6 +152,19 @@ impl AppState {
     pub fn set_issue(&self, message: Option<String>) {
         if let Ok(mut slot) = self.issue.lock() {
             *slot = message;
+        }
+    }
+
+    /// Clear an issue only if it is still the one the caller wrote.
+    ///
+    /// More than one part of the application can have something honest to say
+    /// about why work is waiting. Resuming must not wipe out a message that
+    /// belongs to somebody else, so the text itself is the token.
+    pub fn clear_issue_if(&self, message: &str) {
+        if let Ok(mut slot) = self.issue.lock() {
+            if slot.as_deref() == Some(message) {
+                *slot = None;
+            }
         }
     }
 

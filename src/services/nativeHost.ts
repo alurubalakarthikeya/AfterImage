@@ -3,9 +3,14 @@ import type {
   ArchiveCollection,
   ArchiveFile,
   ArchiveFolder,
+  BuildInfo,
   FileFace,
+  FileVersion,
+  ImageDna,
   IndexStatus,
   ModelStatus,
+  OrganizePlan,
+  OrganizeReport,
   PeopleSnapshot,
   Person,
   Project,
@@ -180,6 +185,28 @@ export function createNativeHost(): ArchiveHost {
     scanFaces: () => invoke<number>('scan_faces'),
     modelStatus: () => invoke<ModelStatus>('model_status'),
     installModels: (bundles) => invoke<void>('install_models', { bundles }),
+    startService: () => invoke<string>('start_service'),
+    grantFileAccess: (fileId) => invoke<string>('grant_file_access', { fileId }),
+
+    async pickOrganizeDestination() {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: 'Choose where AfterImage should file your files',
+      });
+      return typeof selected === 'string' ? selected : null;
+    },
+
+    organizePlan: (destination) => invoke<OrganizePlan>('organize_plan', { destination }),
+    organizeApply: (destination) => invoke<OrganizeReport>('organize_apply', { destination }),
+
+    buildInfo: () => invoke<BuildInfo>('build_info'),
+
+    imageDna: (fileId) => invoke<ImageDna>('image_dna', { fileId }),
+    versions: (fileId) => invoke<FileVersion[]>('file_versions', { fileId }),
+    captureVersion: (fileId) => invoke<FileVersion>('capture_version', { fileId }),
+    deleteVersion: (versionId) => invoke<void>('delete_version', { versionId }),
 
     search: (query: SearchQuery) => invoke<SearchResponse>('search_archive', { query }),
     similar: (fileId, limit) => invoke<SearchHit[]>('similar_files', { fileId, limit }),
@@ -190,6 +217,8 @@ export function createNativeHost(): ArchiveHost {
     removeTag: (fileId, tagId) => invoke<void>('remove_tag', { fileId, tagId }),
 
     createCollection: (name) => invoke<ArchiveCollection>('create_collection', { name }),
+    renameCollection: (collectionId, name) =>
+      invoke<void>('rename_collection', { collectionId, name }),
     deleteCollection: (collectionId) => invoke<void>('delete_collection', { collectionId }),
     addToCollection: (fileId, collectionId) =>
       invoke<void>('add_to_collection', { fileId, collectionId }),

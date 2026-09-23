@@ -1,5 +1,31 @@
 import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { extendTailwindMerge } from 'tailwind-merge';
+
+/**
+ * The type scale this application defines for itself (see `--text-*` in
+ * `index.css`).
+ *
+ * `tailwind-merge` decides what a `text-*` class means by looking at its value:
+ * a known step or a length is a font size, anything else is a colour. Scale
+ * names invented here are not known to it, so `text-meta` was classified as a
+ * *colour* — and two colour classes in one list resolve to the last one. That is
+ * how a primary button ended up with `bg-ink` and no text colour at all: it was
+ * merged away, and the label inherited the colour of the panel behind the
+ * button's own background, which in both themes is the same colour as the
+ * button. A button whose label cannot be read is not a styling preference.
+ *
+ * Naming them here fixes every component at once, because every component goes
+ * through `cn`.
+ */
+const FONT_SIZES = ['2xs', 'meta', 'body', 'card', 'section', 'title', 'hero', 'display'];
+
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      'font-size': [{ text: FONT_SIZES }],
+    },
+  },
+});
 
 /** Tailwind-aware className joiner used by every component. */
 export function cn(...inputs: ClassValue[]): string {

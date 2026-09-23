@@ -400,6 +400,36 @@ pub struct ModelStatus {
     pub directory: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// True when this machine has an indexer that could be started but is not
+    /// running yet. The difference between "not installed" and "not started" is
+    /// the difference between a download and a button.
+    pub can_start: bool,
+    /// True when this machine is currently drawing from its battery.
+    pub on_battery: bool,
+}
+
+/// Which build this is, and where it keeps its files.
+///
+/// Two builds of AfterImage look identical and install to the same place, so
+/// the only way to tell an installed copy apart from a newer one is for the
+/// application to say what it is. Everything here is read from the running
+/// binary rather than written by hand, so it cannot drift.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildInfo {
+    pub version: String,
+    /// When the executable itself was written — i.e. when this build was made.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub built_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
+    pub data_dir: String,
+    pub thumbnails_dir: String,
+    pub database: String,
+    /// True when the installer carried its own indexer, rather than relying on
+    /// a Python environment that happens to be on this machine.
+    pub bundled_indexer: bool,
+    pub on_battery: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -410,4 +440,97 @@ pub struct SearchResponse {
     pub interpretation: QueryInterpretation,
     pub semantic_available: bool,
     pub error: Option<String>,
+}
+
+/// One colour that actually covers part of a picture.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DnaColor {
+    pub hex: String,
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    /// Share of the analysed pixels this colour accounts for, 0..1.
+    pub share: f64,
+}
+
+/// What this machine can actually say about one picture.
+///
+/// Two kinds of fact live here and they are kept separate on purpose: what the
+/// scan read from the file (size, dates, dimensions, format) and what `dna`
+/// measured in the pixels. Every field that could not be determined is `None`,
+/// so the interface omits the row rather than printing a plausible number.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageDna {
+    pub file_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<i64>,
+    /// Width ÷ height, to two decimals.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<f64>,
+    /// `landscape`, `portrait` or `square`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<String>,
+    pub format: String,
+    pub bytes: i64,
+    pub created_at: String,
+    pub modified_at: String,
+    /// False when the pixels could not be read here. The row still carries the
+    /// facts the scan found; nothing is invented to fill the gap.
+    pub decoded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub palette: Vec<DnaColor>,
+    /// Mean luma, 0..1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brightness: Option<f64>,
+    /// Standard deviation of luma, 0..1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contrast: Option<f64>,
+    /// Edge energy, normalised 0..1. Higher is more detail in focus.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sharpness: Option<f64>,
+    /// Mean chroma, 0..1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saturation: Option<f64>,
+    /// `warm`, `neutral` or `cool`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<String>,
+    /// Red minus blue, -1..1. The number behind the word above.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature_shift: Option<f64>,
+    /// Labels the local vision model put on the picture. Empty when no model is
+    /// installed, which is a supported way to run AfterImage.
+    pub objects: Vec<String>,
+}
+
+/// One kept copy of a picture, for before/after comparison.
+///
+/// A version is the archive's own 1600px presentation copy, taken the moment
+/// the pipeline notices the file on disk has changed. That is the smallest copy
+/// that can answer "what did this look like before I edited it" without keeping
+/// a second copy of every original photograph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileVersion {
+    pub id: String,
+    pub file_id: String,
+    /// Absolute path to the kept copy, inside the thumbnail directory — the one
+    /// place the webview is allowed to read from.
+    pub path: String,
+    pub bytes: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<i64>,
+    /// When the copy was taken.
+    pub captured_at: String,
+    /// The modification time of the content this copy shows — the date that
+    /// means something when two versions are compared.
+    pub content_at: String,
+    /// `change` (the file changed on disk) or `manual`.
+    pub source: String,
 }

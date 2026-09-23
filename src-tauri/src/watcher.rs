@@ -101,6 +101,18 @@ fn schedule_scan(app: &AppHandle, state: &Arc<AppState>, changed: Vec<PathBuf>) 
         return;
     }
 
+    // Automatic indexing off: the change is real and the interface still hears
+    // about it, but nothing is read until the user asks for it. The files are
+    // not lost — the next scan of that folder picks them up.
+    if !state.auto_index.load(Ordering::Relaxed) {
+        let _ = app.emit(
+            "archive://notice",
+            "info|New files detected in a watched folder — automatic indexing is off, so they \
+             are waiting for you to index them.",
+        );
+        return;
+    }
+
     // One scan at a time. A second batch arriving mid-scan is not lost: the
     // running scan reads the directory fresh, so it already sees those changes.
     if state.scanning.swap(true, Ordering::SeqCst) {

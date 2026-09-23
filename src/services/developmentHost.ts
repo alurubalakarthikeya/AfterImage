@@ -4,10 +4,14 @@ import type {
   ArchiveFile,
   ArchiveFolder,
   ArchiveTotals,
+  BuildInfo,
   FileFace,
   FileKind,
+  FileVersion,
+  ImageDna,
   IndexStatus,
   ModelStatus,
+  OrganizePlan,
   PeopleSnapshot,
   Person,
   Project,
@@ -196,9 +200,29 @@ export function createDevelopmentHost(): ArchiveHost {
       available: false,
       missingMegabytes: 0,
       reason: 'The model store lives in the desktop build.',
+      canStart: false,
+      onBattery: false,
     }),
 
     installModels: () => refuse('Downloading models'),
+    // There is no original file to hand over: the browser was never given one.
+    // Callers fall back to the generated preview, which is what this host has.
+    grantFileAccess: () =>
+      refuse('Opening the original file — the browser preview only has previews'),
+    startService: () =>
+      refuse('Starting the indexer — the browser preview has no process to start'),
+
+    // The build stamp is worth reporting here too: it is how a person checks
+    // which bundle the preview is serving while the desktop build is elsewhere.
+    buildInfo: async (): Promise<BuildInfo> => ({
+      version: __BUILD_VERSION__,
+      builtAt: __BUILD_TIME__,
+      dataDir: 'not a filesystem (browser preview)',
+      thumbnailsDir: 'not a filesystem (browser preview)',
+      database: 'the browser\u2019s local storage',
+      bundledIndexer: false,
+      onBattery: false,
+    }),
 
     search: async (query: SearchQuery): Promise<SearchResponse> => ({
       hits: [],
@@ -217,10 +241,33 @@ export function createDevelopmentHost(): ArchiveHost {
     similar: () => refuse('Similar image search'),
     related: () => refuse('Related files'),
 
+    // Measuring a picture needs pixels, and the browser build has no filesystem
+    // to read them from. Refusing is the honest answer; a made-up palette would
+    // describe a picture that does not exist.
+    imageDna: (fileId: string): Promise<ImageDna> =>
+      refuse(`Measuring the image DNA of ${fileId}`),
+
+    // Moving the user's own files is the desktop build's job; the browser build
+    // that *can* read folders is `webHost`, and it refuses this too.
+    pickOrganizeDestination: () => refuse('Choosing a folder to file files into'),
+    organizePlan: async (): Promise<OrganizePlan> => ({
+      root: '',
+      moves: [],
+      skipped: [],
+      settled: 0,
+      folders: [],
+      totalBytes: 0,
+    }),
+    organizeApply: () => refuse('Reorganizing files on disk'),
+    versions: async (): Promise<FileVersion[]> => [],
+    captureVersion: () => refuse('Keeping a version'),
+    deleteVersion: () => refuse('Removing a version'),
+
     setFavorite: () => refuse('Saving metadata'),
     addTag: () => refuse('Tagging'),
     removeTag: () => refuse('Tagging'),
     createCollection: () => refuse('Creating collections'),
+    renameCollection: () => refuse('Renaming collections'),
     deleteCollection: () => refuse('Deleting collections'),
     addToCollection: () => refuse('Saving metadata'),
     removeFromCollection: () => refuse('Saving metadata'),

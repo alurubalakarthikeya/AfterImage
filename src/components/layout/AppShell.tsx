@@ -83,11 +83,15 @@ export function AppShell() {
   const needsSetup = status === 'ready' && folders.length === 0 && route !== 'settings';
 
   /**
-   * Settings is a full-width page. The inspector belongs to the *archive* —
-   * files, collections, folder state — and on a page of preferences it put a
-   * 320px dead column between the settings and the edge of the window.
+   * The inspector follows its toggle everywhere, Settings included.
+   *
+   * It belongs to the archive rather than to a page — what is indexed, how much
+   * of it there is, which folders are being watched — and while the user is
+   * changing what the pipeline does, that is exactly the column worth having
+   * open beside them. `needsSetup` still wins: with nothing granted yet there is
+   * no archive for it to describe.
    */
-  const showInspector = inspectorOpen && roomForInspector && !needsSetup && route !== 'settings';
+  const showInspector = inspectorOpen && roomForInspector && !needsSetup;
   const sidebarWidth = sidebarCollapsed ? SIDEBAR_NARROW : SIDEBAR_WIDE;
 
   const columns = showInspector

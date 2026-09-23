@@ -98,18 +98,14 @@
         pointer-events: none;
       }
 
-      /* One soft accent halo. No gradient on the mark itself — the geometry is
-         the identity, and a glowing logo is decoration pretending to be brand. */
-      #af-splash::before {
-        content: '';
-        position: absolute;
-        width: 640px;
-        height: 640px;
-        border-radius: 50%;
-        background: radial-gradient(circle, var(--af-glow), transparent 68%);
-        pointer-events: none;
-      }
-
+      /*
+       * No mark, no halo, no tagline.
+       *
+       * A splash is the one screen the user did not ask for, so it says the name
+       * and shows that work is happening, and nothing else. The halo that used to
+       * sit behind it was a cold blue wash over the whole window, which read as a
+       * change of theme rather than as a loading state.
+       */
       #af-splash .af-splash-stack {
         position: relative;
         display: flex;
@@ -123,16 +119,9 @@
       }
 
       #af-splash .af-splash-name {
-        font: 600 15px/1.2 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+        font: 600 16px/1.2 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
         letter-spacing: -0.02em;
         color: var(--af-ink);
-      }
-
-      #af-splash .af-splash-tagline {
-        margin-top: 3px;
-        font: 400 11.5px/1.3 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
-        letter-spacing: 0.01em;
-        color: var(--af-ink-3);
       }
 
       #af-splash .af-splash-track {
@@ -165,20 +154,7 @@
         }
       }
 
-      @keyframes af-splash-breathe {
-        0%,
-        100% {
-          opacity: 1;
-          transform: scale(1);
-        }
-        50% {
-          opacity: 0.72;
-          transform: scale(0.975);
-        }
-      }
-
       @media (prefers-reduced-motion: reduce) {
-        #af-splash .af-splash-mark,
         #af-splash .af-splash-track::after {
           animation: none;
         }
@@ -190,41 +166,7 @@
          never runs is the boot guard, which reports why. -->
     <div id="af-splash" role="status" aria-live="polite" aria-label="AfterImage is starting">
       <div class="af-splash-stack">
-        <svg
-          class="af-splash-mark"
-          width="46"
-          height="46"
-          viewBox="0 0 32 32"
-          fill="none"
-          aria-hidden="true"
-        >
-          <rect x="1.25" y="1.25" width="29.5" height="29.5" rx="9" fill="var(--af-accent-soft)" />
-          <rect
-            x="7.5"
-            y="7.5"
-            width="12"
-            height="12"
-            rx="3.5"
-            stroke="var(--af-accent)"
-            stroke-width="1.6"
-            opacity="0.45"
-          />
-          <rect
-            x="11"
-            y="11"
-            width="12"
-            height="12"
-            rx="3.5"
-            stroke="var(--af-accent)"
-            stroke-width="1.6"
-            opacity="0.75"
-          />
-          <rect x="14.5" y="14.5" width="11" height="11" rx="3.5" fill="var(--af-accent)" />
-        </svg>
-        <div style="text-align: center">
-          <div class="af-splash-name">AfterImage</div>
-          <div class="af-splash-tagline">Opening your local archive</div>
-        </div>
+        <div class="af-splash-name">AfterImage</div>
         <div class="af-splash-track" aria-hidden="true"></div>
       </div>
     </div>

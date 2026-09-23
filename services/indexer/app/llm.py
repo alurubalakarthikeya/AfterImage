@@ -141,11 +141,12 @@ def parse_rules(text: str) -> dict[str, object]:
     return parsed
 
 
-def _call_ollama(text: str) -> dict[str, object] | None:
+def _call_ollama(text: str, model: str | None = None) -> dict[str, object] | None:
     settings = get_settings()
+    chosen = (model or "").strip() or settings.llm_model
     payload = json.dumps(
         {
-            "model": settings.llm_model,
+            "model": chosen,
             "prompt": f"{SYSTEM_PROMPT}\n\nQuery: {text}\nJSON:",
             "stream": False,
             "format": "json",
@@ -175,15 +176,26 @@ def _call_ollama(text: str) -> dict[str, object] | None:
     return decoded if isinstance(decoded, dict) else None
 
 
-def parse(text: str) -> dict[str, object]:
-    """Model first when available, rules otherwise. Never raises."""
+def parse(text: str, model: str | None = None) -> dict[str, object]:
+    """Model first when available, rules otherwise. Never raises.
+
+    The desktop shell only calls this route when the user has turned the local
+    model on, so `enabled` here is not a second gate — it is the environment's
+    own preference, which still applies to anything calling the service by hand.
+    Naming a model explicitly overrides both the env switch and the env model,
+    because a person who picked one in the interface has already answered the
+    question the switch asks.
+    """
     rules = parse_rules(text)
     settings = get_settings()
+    chosen = (model or "").strip()
 
-    if not settings.llm_enabled or not available():
+    if not chosen and not settings.llm_enabled:
+        return rules
+    if not available():
         return rules
 
-    model = _call_ollama(text)
+    model = _call_ollama(text, chosen or None)
     if not model:
         return rules
 

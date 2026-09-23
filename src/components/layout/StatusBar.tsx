@@ -1,7 +1,8 @@
 import { useArchiveStore } from '@/stores/archive';
+import { usePeopleStore } from '@/stores/people';
 import { useUIStore } from '@/stores/ui';
 import { getHost } from '@/services/host';
-import { cn, formatCount, formatStorage } from '@/utils/format';
+import { cn, formatCount, formatRelativeTime, formatStorage } from '@/utils/format';
 import { Icon } from '@/components/common/Icon';
 
 /**
@@ -17,13 +18,21 @@ export function StatusBar() {
   const index = useArchiveStore((state) => state.index);
   const storage = useArchiveStore((state) => state.storage);
   const folders = useArchiveStore((state) => state.folders);
+  const tags = useArchiveStore((state) => state.tags);
+  const collections = useArchiveStore((state) => state.collections);
+  const peopleStats = usePeopleStore((state) => state.stats);
   const loading = useArchiveStore((state) => state.status === 'loading');
   const setIndexingOpen = useUIStore((state) => state.setIndexingOpen);
+  const navigate = useUIStore((state) => state.navigate);
 
   const busy = index.state === 'indexing' || index.state === 'scanning';
   const queued = index.pending + index.processing;
   const problem = index.problem;
   const native = getHost().capabilities.sqlite;
+
+  // Averaged over this run, which is the only rate the pipeline can honestly
+  // report: it counts finished files against the wall clock of the batch.
+  const rate = index.perMinute > 0 ? `${formatCount(index.perMinute)}/min` : null;
 
   return (
     <footer className="glass relative z-30 flex h-7 shrink-0 items-center gap-3 border-t border-line px-3 text-2xs text-ink-3">
@@ -95,7 +104,83 @@ export function StatusBar() {
         {folders.length} {folders.length === 1 ? 'folder' : 'folders'}
       </span>
 
+      {/* The rate, and only while there is a rate to report. It is the one
+          number here that answers "how long will this take", which nothing else
+          on screen does — the queue shows how much is left, not how fast. */}
+      {busy && rate && (
+        <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-ink-2">
+          <Icon name="Gauge" size={11} strokeWidth={2} />
+          {rate}
+        </span>
+      )}
+
+      {/* The folder being walked, which is the useful half of "scanning" — the
+          filename is already in the left-hand segment. */}
+      {busy && index.currentFolder && (
+        <span className="hidden min-w-0 shrink-0 items-center gap-1.5 lg:flex">
+          <span className="max-w-[240px] truncate font-mono text-ink-3/80">
+            {index.currentFolder}
+          </span>
+        </span>
+      )}
+
+      {/* What the archive is made of, counted once and never repeated in the
+          sidebar or the inspector: tags and collections are user-made structure,
+          and people exist only when the face models have been installed. */}
+      {tags.length > 0 && (
+        <button
+          type="button"
+          onClick={() => navigate('home')}
+          title="Tags in use"
+          className="hidden shrink-0 items-center gap-1.5 rounded-[6px] px-1.5 py-0.5 tabular-nums transition-colors duration-150 hover:bg-surface-3 hover:text-ink-2 md:flex"
+        >
+          <Icon name="Tag" size={11} strokeWidth={2} />
+          {formatCount(tags.length)} tags
+        </button>
+      )}
+
+      {collections.length > 0 && (
+        <button
+          type="button"
+          onClick={() => navigate('collections')}
+          title="Collections"
+          className="hidden shrink-0 items-center gap-1.5 rounded-[6px] px-1.5 py-0.5 tabular-nums transition-colors duration-150 hover:bg-surface-3 hover:text-ink-2 md:flex"
+        >
+          <Icon name="Layers" size={11} strokeWidth={2} />
+          {formatCount(collections.length)} collections
+        </button>
+      )}
+
+      {peopleStats.people > 0 && (
+        <button
+          type="button"
+          onClick={() => navigate('people')}
+          title={
+            peopleStats.unnamed > 0
+              ? `${peopleStats.unnamed} groups still to name`
+              : 'Every group is named'
+          }
+          className="hidden shrink-0 items-center gap-1.5 rounded-[6px] px-1.5 py-0.5 tabular-nums transition-colors duration-150 hover:bg-surface-3 hover:text-ink-2 md:flex"
+        >
+          <Icon name="Users" size={11} strokeWidth={2} />
+          {formatCount(peopleStats.people)} people
+          {peopleStats.unnamed > 0 && (
+            <span className="text-caution">{formatCount(peopleStats.unnamed)} to name</span>
+          )}
+        </button>
+      )}
+
       <span className="flex-1" />
+
+      {/* When the index was last brought level with disk. The inspector shows a
+          full timestamp; this is the glanceable version, and it is the one fact
+          a person checks before deciding to rescan. */}
+      {index.lastScanAt && !busy && (
+        <span className="hidden shrink-0 items-center gap-1.5 lg:flex">
+          <Icon name="Clock" size={11} strokeWidth={2} />
+          Indexed {formatRelativeTime(index.lastScanAt)}
+        </span>
+      )}
 
       {/* Right: the promise the product is built on, stated plainly. */}
       <span
