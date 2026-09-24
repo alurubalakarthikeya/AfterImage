@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Protocol
 
@@ -31,6 +32,7 @@ class VectorStore(Protocol):
     def get(self, file_id: str) -> list[float] | None: ...
     def count(self) -> int: ...
     def save(self) -> None: ...
+    def maybe_save(self, interval: float = 5.0) -> None: ...
     def reset(self) -> None: ...
 
 
@@ -52,6 +54,12 @@ class NumpyStore:
         self._ids: list[str] = []
         self._matrix = None
         self._lock = threading.Lock()
+        # Persistence is debounced. Writing the whole matrix after every file is
+        # quadratic: a 10,000-file library would rewrite gigabytes to save a
+        # hundred megabytes. `maybe_save` bounds the write rate and the flush
+        # when the queue drains makes sure the last change is on disk.
+        self._dirty = False
+        self._saved_at = 0.0
         self.load()
 
     def _numpy(self):
@@ -73,34 +81,57 @@ class NumpyStore:
             self._matrix = None
 
     def save(self) -> None:
-        if self._matrix is None:
+        if self._matrix is None and not self._dirty:
             return
         try:
             np = self._numpy()
-            np.save(self.path.with_suffix(".npy"), self._matrix)
-            self.path.with_suffix(".ids.json").write_text(
-                json.dumps(self._ids), encoding="utf-8"
-            )
+            if self._matrix is not None:
+                np.save(self.path.with_suffix(".npy"), self._matrix)
+                self.path.with_suffix(".ids.json").write_text(
+                    json.dumps(self._ids), encoding="utf-8"
+                )
+            else:
+                clear_index_files(self.path)
+            self._dirty = False
+            self._saved_at = time.monotonic()
         except Exception:  # pragma: no cover
             pass
+
+    def maybe_save(self, interval: float = 5.0) -> None:
+        """Persist, but not more often than ``interval`` seconds."""
+        if not self._dirty:
+            return
+        if time.monotonic() - self._saved_at < interval:
+            return
+        self.save()
 
     def add(self, ids: list[str], vectors: list[list[float]]) -> None:
         if not ids:
             return
         np = self._numpy()
-        rows = np.array([_normalise(vector) for vector in vectors], dtype="float32")
+        try:
+            rows = np.array([_normalise(vector) for vector in vectors], dtype="float32")
+        except ValueError:
+            # Ragged input: every vector in one call must have the same width.
+            return
+
         with self._lock:
             if self._matrix is None:
                 self._matrix = rows
                 self._ids = list(ids)
             else:
-                # Replace by id rather than appending duplicates.
-                existing = {file_id: index for index, file_id in enumerate(self._ids)}
+                # A vector of a different width is a vector from a different
+                # model, and stacking it would corrupt the index rather than
+                # extend it. Dropping the row keeps the index usable and the
+                # caller reports the file as not indexed, which is the honest
+                # answer for "this machine cannot embed that yet".
+                if rows.shape[1] != self._matrix.shape[1]:
+                    return
                 keep = [index for index, file_id in enumerate(self._ids) if file_id not in set(ids)]
                 self._matrix = np.vstack([self._matrix[keep], rows])
                 self._ids = [self._ids[index] for index in keep] + list(ids)
-                del existing
             self.dimensions = int(self._matrix.shape[1])
+            self._dirty = True
 
     def get(self, file_id: str) -> list[float] | None:
         """The stored vector for a file, so "more like this" needs no re-encode."""
@@ -117,6 +148,11 @@ class NumpyStore:
             return []
         np = self._numpy()
         query = np.array(_normalise(vector), dtype="float32")
+        # A query from a different model cannot be compared to this index. It
+        # returns nothing, which the renderer reports as "no model installed"
+        # rather than as "nothing matched".
+        if query.shape[-1] != self._matrix.shape[1]:
+            return []
         scores = self._matrix @ query
         order = np.argsort(-scores)[:k]
         return [(self._ids[int(index)], float(scores[int(index)])) for index in order]
@@ -131,15 +167,8 @@ class NumpyStore:
         with self._lock:
             self._ids = []
             self._matrix = None
-        for path in (
-            self.path.with_suffix(".npy"),
-            self.path.with_suffix(".ids.json"),
-            self.path.with_suffix(".faiss"),
-        ):
-            try:
-                path.unlink()
-            except OSError:
-                pass
+            self._dirty = False
+        clear_index_files(self.path)
         self.on_reset()
 
 
@@ -268,6 +297,40 @@ _STORE: VectorStore | None = None
 _STORE_LOCK = threading.Lock()
 
 
+def _space_marker(path: Path):
+    return path.with_suffix(".space")
+
+
+def clear_index_files(path: Path) -> None:
+    """Delete every artifact of the stored index, whatever backend wrote it."""
+    for suffix in (".npy", ".ids.json", ".faiss", ".sqlite"):
+        try:
+            path.with_suffix(suffix).unlink()
+        except OSError:
+            pass
+
+
+def stored_space(path: Path) -> str | None:
+    """The model the persisted vectors came from, as written on the last save."""
+    marker = _space_marker(path)
+    try:
+        value = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def record_space(path: Path, space: str | None, dimensions: int) -> None:
+    marker = _space_marker(path)
+    try:
+        if space and dimensions:
+            marker.write_text(f"{space}:{dimensions}", encoding="utf-8")
+        else:
+            marker.unlink(missing_ok=True)
+    except OSError:  # pragma: no cover - a marker that cannot be written is not fatal
+        pass
+
+
 def get_store() -> VectorStore:
     global _STORE
     if _STORE is not None:
@@ -277,15 +340,30 @@ def get_store() -> VectorStore:
         if _STORE is not None:
             return _STORE
 
+        from . import embed  # local import: embed reads the settings this does
+
         settings = get_settings()
         capabilities = detect()
         requested = settings.vector_backend
 
-        if requested in {"auto", "sqlite-vec"} and capabilities.sqlite_vec:
-            _STORE = SqliteVecStore(settings.vector_path, settings.vector_dims)
-        elif requested in {"auto", "faiss"} and capabilities.faiss:
-            _STORE = FaissStore(settings.vector_path, settings.vector_dims)
-        else:
-            _STORE = NumpyStore(settings.vector_path, settings.vector_dims)
+        space = embed.active_space()
+        dimensions = embed.dimensions() or settings.vector_dims
 
+        # An index built by one model is meaningless to another: the vectors are
+        # different numbers in a different arrangement. When the model on this
+        # machine has changed since the vectors were written, the stored index is
+        # discarded rather than mixed with the new space. The files are re-embedded
+        # by the backfill pass; nothing is lost but the time already spent.
+        previous = stored_space(settings.vector_path)
+        if space and previous and previous != f"{space}:{dimensions}":
+            clear_index_files(settings.vector_path)
+
+        if requested in {"auto", "sqlite-vec"} and capabilities.sqlite_vec:
+            _STORE = SqliteVecStore(settings.vector_path, dimensions)
+        elif requested in {"auto", "faiss"} and capabilities.faiss:
+            _STORE = FaissStore(settings.vector_path, dimensions)
+        else:
+            _STORE = NumpyStore(settings.vector_path, dimensions)
+
+        record_space(settings.vector_path, space, dimensions)
         return _STORE

@@ -17,9 +17,10 @@ use crate::error::{AppError, AppResult};
 use crate::organize::{self, OrganizePlan, OrganizeReport};
 use crate::index;
 use crate::models::{
-    ActivityEntry, ArchiveCollection, ArchiveSnapshot, ArchiveTotals, BuildInfo, FileFace, FilePage,
-    FileQuery, FileRecord, FileVersion, Folder, ImageDna, IndexStatus, ModelBundle, ModelStatus,
-    PeopleSnapshot, Person, Project, SearchHit, SearchQuery, SearchResponse, StorageStats, Tag,
+    ActivityEntry, AnalysisStatus, ArchiveCollection, ArchiveSnapshot, ArchiveTotals, BuildInfo,
+    FileFace, FilePage, FileQuery, FileRecord, FileVersion, Folder, ImageDna, IndexStatus, MediaPages,
+    ModelBundle, ModelStatus, PeopleSnapshot, Person, Project, SearchHit, SearchQuery, SearchResponse,
+    StorageStats, Tag,
 };
 use crate::people;
 use crate::pipeline;
@@ -32,6 +33,13 @@ use crate::versions;
 use crate::watcher;
 
 type SharedState<'a> = State<'a, Arc<AppState>>;
+
+/// How many pages of one document are rendered for the reader.
+///
+/// Enough for a report somebody will actually read through, and far short of
+/// the point where opening a 400-page scan writes a directory of thousands of
+/// JPEGs for pages nobody scrolled to.
+const DOCUMENT_PAGE_LIMIT: i64 = 40;
 
 /// The shared state as an owned handle, for work that outlives the command.
 fn shared(state: &SharedState<'_>) -> Arc<AppState> {
@@ -1139,6 +1147,146 @@ pub fn scan_faces(app: AppHandle, state: SharedState<'_>) -> AppResult<i64> {
     enqueue_face_jobs(&app, state.inner())
 }
 
+fn enqueue_analysis_jobs(app: &AppHandle, state: &Arc<AppState>) -> AppResult<i64> {
+    let jobs = {
+        let conn = state.db()?;
+        db::files_needing_analysis(&conn, 20_000)?
+            .into_iter()
+            .map(|(file_id, path, kind)| pipeline::Job {
+                file_id,
+                path,
+                kind,
+                faces_only: false,
+            })
+            .collect::<Vec<_>>()
+    };
+    let count = jobs.len() as i64;
+    pipeline::enqueue(state, jobs);
+    pipeline::emit_status(app, state, "indexing");
+    Ok(count)
+}
+
+/// Analyse everything already indexed: tags, descriptions, embeddings.
+///
+/// This is the answer to "I installed the models after importing 8,000 files".
+/// Nothing is re-imported, nothing is re-read from scratch: the pass walks the
+/// files the models have not seen, in age order, through the ordinary pipeline —
+/// which means it is the same background queue with the same progress, the same
+/// battery pause and the same effect on the window (none).
+#[tauri::command]
+pub fn analyze_library(app: AppHandle, state: SharedState<'_>) -> AppResult<i64> {
+    let enabled = state.service_enabled.load(Ordering::Relaxed);
+    if !enabled {
+        return Err(AppError::Other(
+            "turn on local processing in settings first — tags come from the local models".into(),
+        ));
+    }
+    enqueue_analysis_jobs(&app, state.inner())
+}
+
+/// How much of the library the models have looked at, and how much is left.
+#[tauri::command]
+pub fn analysis_status(state: SharedState<'_>) -> AppResult<AnalysisStatus> {
+    let conn = state.db()?;
+    let (analysed, total) = db::analysis_progress(&conn)?;
+    let tags = db::analysis_tag_names(&conn)?.len() as i64;
+    Ok(AnalysisStatus {
+        analysed,
+        total,
+        remaining: (total - analysed).max(0),
+        tags,
+    })
+}
+
+fn media_pages_problem(state: &AppState) -> Option<String> {
+    if !state.service_enabled.load(Ordering::Relaxed) {
+        return Some("local processing is turned off, so pages cannot be laid out".into());
+    }
+    let port = state.service_port.load(Ordering::Relaxed);
+    if !service::is_up(port) {
+        return Some("the local indexing service is not running".into());
+    }
+    None
+}
+
+/// The pages of a document, rendered for the reader in the interface.
+///
+/// Rendered rather than handed over as a PDF on purpose. What a webview does
+/// with a local PDF depends on a viewer plugin being installed and willing, and
+/// "usually works" is not a good enough answer for the one panel the user
+/// opened to read something. These are JPEGs in the thumbnail directory — the
+/// only place the webview is allowed to read — so they behave exactly like every
+/// other picture in the archive.
+///
+/// The result is cached on disk, so opening the same document twice costs one
+/// render.
+pub fn pages_work(file_id: &str, state: &AppState) -> AppResult<(String, Vec<String>)> {
+    let (path, kind) = {
+        let conn = state.db()?;
+        let path = db::file_path(&conn, file_id)?
+            .ok_or_else(|| AppError::NotFound("that file is not in the archive".into()))?;
+        let kind = conn
+            .query_row(
+                "SELECT kind FROM files WHERE id = ?1",
+                rusqlite::params![file_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| "document".into());
+        (path, kind)
+    };
+    let _ = kind;
+
+    let directory = state.thumbnail_dir.join("pages").join(file_id);
+    // Already rendered: the directory holds the pages from last time.
+    let mut cached: Vec<String> = match std::fs::read_dir(&directory) {
+        Ok(entries) => {
+            let mut found: Vec<(u32, String)> = entries
+                .filter_map(|entry| entry.ok())
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    let index = path.file_stem()?.to_string_lossy().parse::<u32>().ok()?;
+                    Some((index, path.to_string_lossy().to_string()))
+                })
+                .collect();
+            found.sort_by_key(|(index, _)| *index);
+            found.into_iter().map(|(_, path)| path).collect()
+        }
+        Err(_) => Vec::new(),
+    };
+
+    if cached.is_empty() {
+        let port = state.service_port.load(Ordering::Relaxed);
+        let target = state.thumbnail_dir.join("pages").to_string_lossy().to_string();
+        let rendered = service::render_pages(port, &path, file_id, &target, DOCUMENT_PAGE_LIMIT)
+            .ok_or_else(|| {
+                AppError::Other("this document's pages could not be laid out".into())
+            })?;
+        cached = rendered.paths;
+    }
+
+    Ok((path, cached))
+}
+
+/// The renditions of one document, for the reader.
+#[tauri::command]
+pub fn media_pages(state: SharedState<'_>, file_id: String) -> AppResult<MediaPages> {
+    if let Some(reason) = media_pages_problem(state.inner()) {
+        return Err(AppError::Other(reason));
+    }
+    let (_, paths) = pages_work(&file_id, state.inner())?;
+    let total = {
+        let conn = state.db()?;
+        conn.query_row(
+            "SELECT COALESCE(pages, 0) FROM files WHERE id = ?1",
+            rusqlite::params![file_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+    };
+    let total = if total > 0 { total } else { paths.len() as i64 };
+    Ok(MediaPages { paths, total })
+}
+
 /// What the model store holds, and what it would cost to complete it.
 ///
 /// The three ways this can come back empty are kept apart, because they need
@@ -1416,6 +1564,13 @@ pub fn install_models(
     let handle = shared(&state);
     let app_handle = app.clone();
     let supervisor = app.try_state::<Arc<Supervisor>>().map(|value| value.inner().clone());
+    // Installing the vision models is what turns visual search on, and a library
+    // that was indexed before they existed has none of their tags. The analysis
+    // pass runs on its own so the feature is live when the download finishes
+    // rather than waiting for somebody to find a button.
+    let analyse_after = bundles
+        .iter()
+        .any(|bundle| bundle == "vision" || bundle == "text");
 
     std::thread::Builder::new()
         .name("afterimage-models".into())
@@ -1457,6 +1612,15 @@ pub fn install_models(
                         match enqueue_face_jobs(&app_handle, &handle) {
                             Ok(_) => {}
                             Err(error) => log::warn!("could not queue the face pass: {error}"),
+                        }
+                        if analyse_after {
+                            match enqueue_analysis_jobs(&app_handle, &handle) {
+                                Ok(queued) if queued > 0 => log::info!(
+                                    "analysis: {queued} files queued for tags and descriptions"
+                                ),
+                                Ok(_) => {}
+                                Err(error) => log::warn!("could not queue the analysis pass: {error}"),
+                            }
                         }
                     } else {
                         let _ = app_handle.emit(

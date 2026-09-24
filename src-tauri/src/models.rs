@@ -37,6 +37,10 @@ pub struct FileRecord {
     pub indexed_at: String,
     pub favorite: bool,
     pub tag_ids: Vec<String>,
+    /// The subset of `tag_ids` that the models inferred rather than the user
+    /// typing. Shown as its own group, so an opinion is never presented as the
+    /// user's own word.
+    pub machine_tag_ids: Vec<String>,
     pub collection_ids: Vec<String>,
     pub project_id: Option<String>,
     /// Absolute path to the generated thumbnail, when one exists.
@@ -50,6 +54,12 @@ pub struct FileRecord {
     pub generated_title: Option<String>,
     pub description: Option<String>,
     pub labels: Vec<String>,
+    /// What this file appears to be for, inferred from its own content.
+    ///
+    /// Always an inference and phrased as one — the interface prints it after
+    /// the words "Possible context" — and absent when nothing could be said.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ocr_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -237,6 +247,14 @@ pub struct FileQuery {
     pub favorites_only: Option<bool>,
     #[serde(default)]
     pub since_days: Option<i64>,
+    /// One calendar day, as `YYYY-MM-DD` in the machine's own zone.
+    ///
+    /// The timeline's day headers are the only caller. A whole-day filter is
+    /// not the same question as `since_days`, which is an open range: "what did
+    /// I add on the 14th" and "what did I add in the last week" are different
+    /// questions and the second one cannot answer the first.
+    #[serde(default)]
+    pub day: Option<String>,
     #[serde(default)]
     pub sort: Option<String>,
     #[serde(default)]
@@ -406,6 +424,33 @@ pub struct ModelStatus {
     pub can_start: bool,
     /// True when this machine is currently drawing from its battery.
     pub on_battery: bool,
+}
+
+/// The pages of one document, rendered for the reader.
+///
+/// `total` is how many pages the document actually has, which is not the same
+/// as how many were rendered: a 400-page scan is laid out up to a limit, and the
+/// interface says so rather than implying the file ends where the pictures do.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaPages {
+    pub paths: Vec<String>,
+    pub total: i64,
+}
+
+/// How far the local models have got through the archive.
+///
+/// `analysed` counts files the models have looked at; `tags` counts the distinct
+/// things they found. Both are real counts from the database, which is what lets
+/// the settings screen say "4,120 of 8,003 files analysed" instead of a
+/// progress bar that means nothing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisStatus {
+    pub analysed: i64,
+    pub total: i64,
+    pub remaining: i64,
+    pub tags: i64,
 }
 
 /// Which build this is, and where it keeps its files.

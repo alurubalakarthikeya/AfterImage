@@ -44,6 +44,124 @@ const KNOWN_KINDS: &[&str] = &[
     "photo", "screenshot", "document", "video", "audio", "design", "archive", "other",
 ];
 
+/// Media words that mean a kind when they appear on their own.
+///
+/// "screenshot", "video" and "pdf" are unambiguous: somebody typing them means
+/// the filter, and the application's own classification is reliable for them
+/// because it reads the extension and the folder.
+///
+/// "image", "photo" and "picture" are deliberately **absent**. People use them
+/// for anything with pixels, so filtering on them would hide the screenshot the
+/// query was actually about — the word is a filler in "that photo of the error"
+/// and a filter in "photos from the beach", and there is no way to tell which
+/// from the word alone. As terms they still match, so the file with *photo* in
+/// its name is found either way.
+const KIND_WORDS: &[(&str, &str)] = &[
+    ("screenshot", "screenshot"),
+    ("screenshots", "screenshot"),
+    ("screengrab", "screenshot"),
+    ("screengrabs", "screenshot"),
+    ("capture", "screenshot"),
+    ("captures", "screenshot"),
+    ("video", "video"),
+    ("videos", "video"),
+    ("clip", "video"),
+    ("clips", "video"),
+    ("recording", "video"),
+    ("recordings", "video"),
+    ("audio", "audio"),
+    ("voice", "audio"),
+    ("pdf", "document"),
+    ("pdfs", "document"),
+    ("document", "document"),
+    ("documents", "document"),
+    ("doc", "document"),
+    ("docs", "document"),
+    ("design", "design"),
+    ("designs", "design"),
+    ("mockup", "design"),
+    ("mockups", "design"),
+    ("figma", "design"),
+    ("archive", "archive"),
+    ("zip", "archive"),
+];
+
+/// Date phrases, in the words people actually type.
+///
+/// `since_days` is an open range — "added in the last N days" — so a phrase that
+/// is narrower than a day is expressed as the range that contains it. "Yesterday"
+/// is therefore two days, not one: the filter can say "yesterday or today", and
+/// pretending otherwise would hide a file added this morning.
+///
+/// A quoted phrase is preferred over a word, so "last week" is matched as a
+/// phrase before "week" could ever be treated as a term.
+const DAY_PHRASES: &[(&str, i64)] = &[
+    ("today", 1),
+    ("this morning", 1),
+    ("tonight", 1),
+    ("yesterday", 2),
+    ("this week", 7),
+    ("last week", 7),
+    ("past week", 7),
+    ("this month", 30),
+    ("last month", 30),
+    ("past month", 30),
+    ("this year", 365),
+    ("last year", 365),
+    ("recently", 14),
+    ("recent", 14),
+];
+
+/// Words that carry no meaning for a filename index.
+///
+/// Every term is OR-ed into the full-text query, so a filler word is not
+/// harmless: "show me that screenshot of the receipt" would bring back every
+/// file whose text contains "me", "of" or "the". The ranking would sort them
+/// last, but they would still be there, and the words that mattered would be
+/// competing with them for the 400-candidate budget.
+const STOP_WORDS: &[&str] = &[
+    "a", "about", "all", "an", "and", "any", "are", "as", "at", "be", "been", "by", "can", "could",
+    "did", "do", "does", "find", "for", "from", "get", "give", "had", "has", "have", "i", "in", "is",
+    "it", "its", "just", "like", "me", "my", "of", "on", "or", "our", "please", "show", "some",
+    "that", "the", "their", "them", "then", "there", "these", "they", "this", "those", "to", "up", "us",
+    "was", "we", "were", "what", "when", "where", "which", "who", "will", "with", "would", "you", "your",
+];
+
+/// The words a date phrase is built from, dropped once one has matched.
+const DATE_VOCABULARY: &[&str] = &[
+    "today", "tonight", "yesterday", "morning", "last", "this", "past", "week", "month", "year",
+    "recent", "recently",
+];
+
+/// Case-insensitive whole-phrase search, with word boundaries.
+///
+/// A boundary check matters here: "recent" must not match inside
+/// "recently-exported.csv" as a date word, and "today" must not match inside a
+/// filename, or a query containing an unrelated word could silently acquire a
+/// date filter nobody asked for.
+fn contains_phrase(haystack: &str, phrase: &str) -> bool {
+    let mut from = 0;
+    while let Some(position) = haystack[from..].find(phrase) {
+        let start = from + position;
+        let end = start + phrase.len();
+        let before_ok = start == 0
+            || !haystack[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| character.is_alphanumeric());
+        let after_ok = end >= haystack.len()
+            || !haystack[end..]
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_alphanumeric());
+        if before_ok && after_ok {
+            return true;
+        }
+        from = end.max(start + 1);
+    }
+    false
+}
+
 /// Split text into search tokens.
 fn tokens(text: &str) -> Vec<String> {
     text.split(|character: char| !character.is_alphanumeric())
@@ -78,6 +196,17 @@ pub fn parse_rules(raw: &str) -> Parsed {
     }
     rest.push_str(&buffer);
 
+    // Date phrases first, on the whole string: they are the one part of a query
+    // that is not a keyword, and "last week" must be consumed before its two
+    // words can be treated as terms.
+    let lowered = rest.to_lowercase();
+    for (phrase, days) in DAY_PHRASES {
+        if contains_phrase(&lowered, phrase) {
+            parsed.since_days = Some(parsed.since_days.map_or(*days, |existing: i64| existing.max(*days)));
+        }
+    }
+    let date_words = parsed.since_days.is_some();
+
     for word in rest.split_whitespace() {
         let lower = word.to_lowercase();
         if let Some(value) = lower.strip_prefix("kind:") {
@@ -111,6 +240,19 @@ pub fn parse_rules(raw: &str) -> Parsed {
             if let Ok(days) = value.trim_end_matches('d').parse::<i64>() {
                 parsed.since_days = Some(days);
             }
+            continue;
+        }
+        // A bare media word is a filter, not a keyword.
+        if let Some((_, kind)) = KIND_WORDS.iter().find(|(word, _)| *word == lower) {
+            if !parsed.kinds.iter().any(|existing| existing == kind) {
+                parsed.kinds.push((*kind).to_string());
+            }
+            continue;
+        }
+        if date_words && DATE_VOCABULARY.contains(&lower.as_str()) {
+            continue;
+        }
+        if STOP_WORDS.contains(&lower.as_str()) {
             continue;
         }
         parsed.terms.push(word.to_string());
@@ -396,12 +538,23 @@ impl<'a> Retrieval<'a> {
                     .collect()
             });
 
+        // A single hashtag is an explicit filter — `#react` means the tag, the
+        // same way it does everywhere else — so it narrows the search rather
+        // than merely being ranked first. With several, the terms do the work
+        // and the tags only add relevance, because requiring all of them would
+        // hide the file that has two of the three.
+        let single_tag = match tag_ids.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        };
+
         let filters = FileQuery {
             kinds: if parsed.kinds.is_empty() {
                 None
             } else {
                 Some(parsed.kinds.clone())
             },
+            tag_id: single_tag,
             collection_id: query.collection_id.clone(),
             project_id: query.project_id.clone(),
             folder_id: query.folder_id.clone(),
@@ -436,6 +589,9 @@ impl<'a> Retrieval<'a> {
 
         // Tag-only queries ("#react") have no text terms at all, so fetch the
         // members directly rather than returning nothing.
+        //
+        // With more than one tag the filters above carry only the first, so
+        // this is also where a multi-tag query finds its members.
         if expression.is_none() && !tag_ids.is_empty() {
             for tag_id in &tag_ids {
                 let page = db::list_files(
@@ -903,5 +1059,50 @@ mod tests {
         let parsed = parse_rules("kind:photo person:Priya");
         assert_eq!(parsed.kinds, vec!["photo".to_string()]);
         assert_eq!(parsed.terms, vec!["person:Priya".to_string()]);
+    }
+
+    /// "images from yesterday" is a date filter, and `images` is not a kind.
+    ///
+    /// This is the sentence the feature was asked for, so it is the one worth a
+    /// test: the words that describe *when* must not survive as keywords, and
+    /// the word that means "photo" loosely must not become a filter that hides
+    /// the screenshot somebody was looking for.
+    #[test]
+    fn a_natural_date_phrase_becomes_a_range() {
+        let parsed = parse_rules("images from yesterday");
+        assert_eq!(parsed.since_days, Some(2));
+        assert!(parsed.kinds.is_empty(), "{:?}", parsed.kinds);
+        assert_eq!(parsed.terms, vec!["images".to_string()]);
+    }
+
+    #[test]
+    fn the_longest_date_phrase_wins() {
+        let parsed = parse_rules("receipts from last month");
+        assert_eq!(parsed.since_days, Some(30));
+        // "last" and "month" are part of the phrase, not keywords.
+        assert_eq!(parsed.terms, vec!["receipts".to_string()]);
+    }
+
+    /// "game screenshots" filters to screenshots and keeps `game` as the term.
+    #[test]
+    fn a_bare_media_word_becomes_a_kind() {
+        let parsed = parse_rules("game screenshots");
+        assert_eq!(parsed.kinds, vec!["screenshot".to_string()]);
+        assert_eq!(parsed.terms, vec!["game".to_string()]);
+    }
+
+    #[test]
+    fn filler_words_do_not_become_terms() {
+        let parsed = parse_rules("show me that screenshot of the receipt");
+        assert_eq!(parsed.kinds, vec!["screenshot".to_string()]);
+        assert_eq!(parsed.terms, vec!["receipt".to_string()]);
+    }
+
+    /// A date word has to stand on its own.
+    #[test]
+    fn a_date_word_inside_a_longer_word_is_not_a_date() {
+        assert!(!contains_phrase("recently-exported.csv", "recent"));
+        assert!(!contains_phrase("updated", "today"));
+        assert!(contains_phrase("from last week", "last week"));
     }
 }

@@ -99,7 +99,7 @@ export const FileCard = memo(function FileCard({
             {file.favorite && (
               <span
                 className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-[5px] text-white"
-                style={{ backgroundColor: 'rgba(15,21,20,0.55)' }}
+                style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
                 title="Favourite"
               >
                 <Icon name="Star" size={10} strokeWidth={2} fill="currentColor" />
@@ -108,7 +108,7 @@ export const FileCard = memo(function FileCard({
             {processing && (
               <span
                 className="inline-flex h-[18px] items-center gap-1 rounded-[5px] px-1.5 text-[10px] font-medium text-white"
-                style={{ backgroundColor: 'rgba(15,21,20,0.58)' }}
+                style={{ backgroundColor: 'rgba(0,0,0,0.58)' }}
                 title="Still being processed"
               >
                 <span className="h-1 w-1 animate-pulse rounded-full bg-white" />
@@ -128,7 +128,7 @@ export const FileCard = memo(function FileCard({
           {file.durationSec !== undefined && (
             <span
               className="pointer-events-none inline-flex items-center rounded-[5px] px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-white"
-              style={{ backgroundColor: 'rgba(15,21,20,0.68)' }}
+              style={{ backgroundColor: 'rgba(0,0,0,0.68)' }}
             >
               {formatDuration(file.durationSec)}
             </span>

@@ -95,7 +95,7 @@ export function FileThumb({
       <span
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 rounded-[inherit]"
-        style={{ boxShadow: 'inset 0 0 0 1px rgba(20,33,36,0.06)' }}
+        style={{ boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.06)' }}
       />
       {overlay}
       {children}
@@ -154,7 +154,7 @@ export function ThumbChip({
         'pointer-events-none inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums text-white',
         className,
       )}
-      style={{ backgroundColor: 'rgba(15,21,20,0.62)' }}
+      style={{ backgroundColor: 'rgba(0,0,0,0.62)' }}
     >
       {icon && <Icon name={icon} size={10} strokeWidth={2.2} />}
       {children}

@@ -33,18 +33,40 @@ log = logging.getLogger("afterimage.indexer.vision")
 _SESSION_LOCK = threading.Lock()
 _SESSIONS: dict[str, Any] = {}
 
+# CLIP is trained on a fixed 77-token window.
+_CLIP_WINDOW = 77
+# MiniLM takes longer sequences.
+_MINILM_WINDOW = 256
+
+
 @lru_cache(maxsize=4)
-def _tokenizer(path: str, padding: int, ceiling: int, pad_token: str | None) -> Any | None:
+def _tokenizer(path: str, padding: int, ceiling: int, pad_token: str | None, pad_id: int) -> Any | None:
     """A HuggingFace tokenizer, padded to a fixed width.
 
     Padding to a constant length is not a nicety: the exported graphs are traced
     with a fixed sequence dimension, so a ragged batch is rejected outright.
+
+    *What* the padding is matters more than that it exists. CLIP's exported text
+    tower declares ``input_ids`` and nothing else — no attention mask — so the
+    model attends to every position in the window, padding included, and pools
+    at the last end-of-text token. Padding with a bare ``0`` therefore feeds it a
+    real, unrelated token at every empty position and moves the token it pools
+    from, which is why a padded batch produced vectors that were all 0.84
+    cosines of each other and could not tell food from a dog. HuggingFace pads
+    this tokenizer with ``<|endoftext|>``, and so must we: the model's own
+    causal attention then treats the tail as an empty continuation, and the
+    end-of-text position it pools at stays where it belongs.
     """
     try:
         from tokenizers import Tokenizer  # type: ignore
 
         tokenizer = Tokenizer.from_file(path)
-        tokenizer.enable_padding(length=padding, pad_id=0, pad_token=pad_token)
+        resolved = tokenizer.token_to_id(pad_token) if pad_token else None
+        tokenizer.enable_padding(
+            length=padding,
+            pad_id=resolved if resolved is not None else pad_id,
+            pad_token=pad_token,
+        )
         tokenizer.enable_truncation(max_length=ceiling)
         return tokenizer
     except Exception as error:  # pragma: no cover - depends on the install
@@ -52,17 +74,24 @@ def _tokenizer(path: str, padding: int, ceiling: int, pad_token: str | None) -> 
         return None
 
 
-# CLIP is trained on a fixed 77-token window and pads with <|endoftext|>.
 def _clip_tokenizer() -> Any | None:
-    return _tokenizer(str(models.path_for(models.CLIP_TOKENIZER)), 77, 77, "<|endoftext|>")
-
-
-# MiniLM takes longer sequences and pads with [PAD].
-_MINILM_WINDOW = 256
+    return _tokenizer(
+        str(models.path_for(models.CLIP_TOKENIZER)),
+        _CLIP_WINDOW,
+        _CLIP_WINDOW,
+        "<|endoftext|>",
+        49407,
+    )
 
 
 def _minilm_tokenizer() -> Any | None:
-    return _tokenizer(str(models.path_for(models.MINILM_TOKENIZER)), _MINILM_WINDOW, _MINILM_WINDOW, "[PAD]")
+    return _tokenizer(
+        str(models.path_for(models.MINILM_TOKENIZER)),
+        _MINILM_WINDOW,
+        _MINILM_WINDOW,
+        "[PAD]",
+        0,
+    )
 
 
 def _session(key: str) -> Any | None:
@@ -178,6 +207,39 @@ def _pick(outputs: dict[str, np.ndarray], preferred: str) -> np.ndarray | None:
     return None
 
 
+def _feed(session: Any, candidates: dict[str, np.ndarray]) -> dict[str, np.ndarray] | None:
+    """Build a session input dictionary from what the graph actually declares.
+
+    Every ONNX export of the same model declares a different set of inputs, and
+    onnxruntime rejects a feed containing a name the graph does not have — so
+    passing a fixed set is how a model that works in one export silently fails
+    in another. Concretely: Xenova's CLIP text tower is exported with
+    ``input_ids`` alone and no ``attention_mask``, while its MiniLM export wants
+    ``input_ids``, ``attention_mask`` *and* ``token_type_ids``. Sending the
+    union of all three breaks both.
+
+    So the graph is asked what it wants, and missing optional inputs are
+    supplied with a sensible default: a text model that wants an attention mask
+    it was not given should attend to everything, and ``token_type_ids`` is
+    always zero on a single-segment input.
+    """
+    wanted = session.get_inputs()
+    feed: dict[str, np.ndarray] = {}
+    for item in wanted:
+        if item.name in candidates:
+            feed[item.name] = candidates[item.name]
+            continue
+        # Not something the caller produces: fill in what this name means.
+        if item.name == "token_type_ids":
+            feed[item.name] = np.zeros_like(candidates["input_ids"])
+        elif item.name == "attention_mask" and "input_ids" in candidates:
+            feed[item.name] = np.ones_like(candidates["input_ids"])
+        else:
+            log.warning("vision: %s requires unknown input %r", item.name, item.name)
+            return None
+    return feed
+
+
 def encode_image(path: str) -> np.ndarray | None:
     """A normalised 512-dimensional CLIP vector for one image."""
     session = _session(models.CLIP_VISION.key)
@@ -186,8 +248,11 @@ def encode_image(path: str) -> np.ndarray | None:
     pixels = preprocess_image(path)
     if pixels is None:
         return None
+    feed = _feed(session, {"pixel_values": pixels})
+    if feed is None:
+        return None
     try:
-        outputs = session.run(None, {"pixel_values": pixels})
+        outputs = session.run(None, feed)
         names = [item.name for item in session.get_outputs()]
         values = dict(zip(names, outputs))
         vector = _pick(values, "image_embeds")
@@ -219,7 +284,10 @@ def encode_texts(texts: list[str]) -> list[np.ndarray] | None:
         encodings = tokenizer.encode_batch([text.replace("\n", " ") for text in texts])
         input_ids = np.array([item.ids for item in encodings], dtype=np.int64)
         attention = np.array([item.attention_mask for item in encodings], dtype=np.int64)
-        outputs = session.run(None, {"input_ids": input_ids, "attention_mask": attention})
+        feed = _feed(session, {"input_ids": input_ids, "attention_mask": attention})
+        if feed is None:
+            return None
+        outputs = session.run(None, feed)
         names = [item.name for item in session.get_outputs()]
         values = dict(zip(names, outputs))
         matrix = _pick(values, "text_embeds")
@@ -285,9 +353,10 @@ def embed_texts(texts: list[str]) -> list[np.ndarray] | None:
         encodings = tokenizer.encode_batch([text.replace("\n", " ") for text in texts])
         input_ids = np.array([item.ids for item in encodings], dtype=np.int64)
         attention = np.array([item.attention_mask for item in encodings], dtype=np.int64)
-        outputs = session.run(
-            None, {"input_ids": input_ids, "attention_mask": attention}
-        )
+        feed = _feed(session, {"input_ids": input_ids, "attention_mask": attention})
+        if feed is None:
+            return None
+        outputs = session.run(None, feed)
         names = [item.name for item in session.get_outputs()]
         values = dict(zip(names, outputs))
 

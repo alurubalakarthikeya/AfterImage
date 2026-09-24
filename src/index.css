@@ -24,16 +24,16 @@
  */
 :root {
   /* Surfaces */
-  --af-canvas: #f6f8fa;
+  --af-canvas: #ffffff;
   --af-surface: #ffffff;
-  --af-surface-2: #f6f8fa;
-  --af-surface-3: #eff1f4;
-  --af-surface-sunken: #e8ebef;
+  --af-surface-2: #f5f5f5;
+  --af-surface-3: #ededed;
+  --af-surface-sunken: #e4e4e4;
 
   /* Text */
-  --af-ink: #1f2328;
-  --af-ink-2: #59636e;
-  --af-ink-3: #818b98;
+  --af-ink: #181818;
+  --af-ink-2: #595959;
+  --af-ink-3: #8a8a8a;
 
   /* Accent — the only saturated colour in the interface */
   --af-accent: #0969da;
@@ -48,8 +48,8 @@
    * The blue is kept for links, focus rings and the few controls where colour
    * genuinely carries the meaning.
    */
-  --af-accent-soft: #e7eaee;
-  --af-accent-softer: #f1f3f6;
+  --af-accent-soft: #e9e9e9;
+  --af-accent-softer: #f2f2f2;
 
   /* Search-match highlight. The one place a warm tint is worth its weight. */
   --af-highlight: #fff1b8;
@@ -59,7 +59,7 @@
      the ambient wash behind it shows through and the window gains depth
      without a single drop shadow doing the work. */
   --af-glass: rgba(255, 255, 255, 0.56);
-  --af-glass-chrome: rgba(250, 252, 254, 0.66);
+  --af-glass-chrome: rgba(255, 255, 255, 0.66);
   --af-glass-hairline: rgba(255, 255, 255, 0.8);
   /*
    * The sheen: a band of light across the top of a panel, fading out by the
@@ -81,23 +81,30 @@
    */
   --af-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.05'/%3E%3C/svg%3E");
 
-  /* Ambient wash: two very faint fields of colour under the whole window,
-     which is what the glass has to refract. Without something behind it, a
-     blurred surface is just a grey rectangle. */
   /*
-   * The ambient wash is what the glass has to refract, so it is pitched by what
-   * the blur needs rather than by what looks good on a bare canvas: a very faint
-   * field gives the blur nothing to work with, and a blurred nothing is exactly
-   * the slightly-transparent panel the glass is supposed to be better than.
+   * Ambient wash: faint fields under the whole window, which is what the glass
+   * has to refract. Without something behind it, a blurred surface is just a
+   * grey rectangle.
+   *
+   * Strictly achromatic. The wash used to be tinted — blue, green, violet, red —
+   * on the theory that colour gives the blur something to resolve, but a tinted
+   * field at this size does not read as depth, it reads as the canvas being the
+   * wrong colour: a blue-grey window that never quite looks like it is on a white
+   * background. Depth comes from the edge of the field, not from its hue, so
+   * these are steps of black (light) and white (dark) instead. The canvas itself
+   * is pure `#ffffff` / `#000000`.
    */
-  --af-ambient-a: rgba(9, 105, 218, 0.2);
-  --af-ambient-b: rgba(26, 127, 55, 0.16);
-  --af-ambient-c: rgba(130, 80, 223, 0.14);
-  --af-ambient-d: rgba(207, 34, 46, 0.07);
+  --af-ambient-a: rgba(0, 0, 0, 0.055);
+  --af-ambient-b: rgba(0, 0, 0, 0.04);
+  --af-ambient-c: rgba(0, 0, 0, 0.03);
+  --af-ambient-d: rgba(0, 0, 0, 0.02);
 
   /* Hairlines */
-  --af-line: rgba(31, 35, 40, 0.09);
-  --af-line-strong: rgba(31, 35, 40, 0.16);
+  --af-line: rgba(0, 0, 0, 0.09);
+  --af-line-strong: rgba(0, 0, 0, 0.16);
+
+  /* The track behind an indeterminate bar (boot screen, progress rows). */
+  --af-track: rgba(0, 0, 0, 0.08);
 
   /* Status — the only colours besides the accent that carry meaning:
      success, warning, failure. */
@@ -117,10 +124,10 @@
   --af-blue-ink: #0757ba;
 
   /* Code / extracted-text panel */
-  --af-code-bg: #f6f8fa;
-  --af-code-ink: #1f2328;
-  --af-code-dim: #59636e;
-  --af-code-line: rgba(31, 35, 40, 0.1);
+  --af-code-bg: #f5f5f5;
+  --af-code-ink: #181818;
+  --af-code-dim: #595959;
+  --af-code-line: rgba(0, 0, 0, 0.1);
   --af-code-accent: #0550ae;
   --af-code-critical: #cf222e;
 
@@ -130,11 +137,11 @@
      Shadow is reserved for things that genuinely float — menus, modals, drag
      previews. */
   --af-shadow-soft: none;
-  --af-shadow-raised: 0 1px 2px rgba(31, 35, 40, 0.06), 0 3px 8px rgba(31, 35, 40, 0.04);
+  --af-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.06), 0 3px 8px rgba(0, 0, 0, 0.04);
   /* The inset line is the specular edge of the floating glass. It is part of the
      elevation token rather than the glass utility because a menu sets its own
      shadow inline, and an inline shadow replaces a utility one entirely. */
-  --af-shadow-float: 0 8px 24px rgba(31, 35, 40, 0.12), 0 1px 3px rgba(31, 35, 40, 0.06),
+  --af-shadow-float: 0 8px 24px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06),
     inset 0 1px 0 var(--af-glass-hairline);
   --af-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 
@@ -142,39 +149,42 @@
 }
 
 [data-theme='dark'] {
-  --af-canvas: #010409;
-  --af-surface: #0d1117;
-  --af-surface-2: #151b23;
-  --af-surface-3: #1c2128;
-  --af-surface-sunken: #010409;
+  --af-canvas: #000000;
+  --af-surface: #0a0a0a;
+  --af-surface-2: #141414;
+  --af-surface-3: #1c1c1c;
+  --af-surface-sunken: #000000;
 
-  --af-ink: #f0f6fc;
-  --af-ink-2: #9198a1;
-  --af-ink-3: #6e7681;
+  --af-ink: #f5f5f5;
+  --af-ink-2: #a3a3a3;
+  --af-ink-3: #7a7a7a;
 
   --af-accent: #4493f8;
   --af-accent-strong: #58a6ff;
   --af-accent-ink: #a5d0ff;
-  --af-accent-soft: #21262d;
-  --af-accent-softer: #171c23;
+  --af-accent-soft: #222222;
+  --af-accent-softer: #181818;
 
   --af-highlight: #5c4a00;
   --af-highlight-ink: #f8e3a1;
 
-  --af-glass: rgba(13, 17, 23, 0.54);
-  --af-glass-chrome: rgba(13, 17, 23, 0.66);
-  --af-glass-hairline: rgba(240, 246, 252, 0.1);
+  --af-glass: rgba(10, 10, 10, 0.54);
+  --af-glass-chrome: rgba(10, 10, 10, 0.66);
+  --af-glass-hairline: rgba(255, 255, 255, 0.1);
   /* On a dark panel the sheen is much weaker: the same 50% band that reads as
      light on white reads as a grey smear over a photograph. */
   --af-glass-sheen: rgba(255, 255, 255, 0.05);
 
-  --af-ambient-a: rgba(68, 147, 248, 0.26);
-  --af-ambient-b: rgba(63, 185, 80, 0.17);
-  --af-ambient-c: rgba(163, 113, 247, 0.2);
-  --af-ambient-d: rgba(248, 81, 73, 0.1);
+  /* Steps of white on black; see the light theme for why there is no hue here. */
+  --af-ambient-a: rgba(255, 255, 255, 0.07);
+  --af-ambient-b: rgba(255, 255, 255, 0.05);
+  --af-ambient-c: rgba(255, 255, 255, 0.04);
+  --af-ambient-d: rgba(255, 255, 255, 0.03);
 
-  --af-line: rgba(240, 246, 252, 0.1);
-  --af-line-strong: rgba(240, 246, 252, 0.2);
+  --af-line: rgba(255, 255, 255, 0.1);
+  --af-line-strong: rgba(255, 255, 255, 0.2);
+
+  --af-track: rgba(255, 255, 255, 0.1);
 
   --af-positive: #3fb950;
   --af-caution: #d29922;
@@ -189,16 +199,16 @@
   --af-blue: #10233d;
   --af-blue-ink: #7ab7ff;
 
-  --af-code-bg: #010409;
-  --af-code-ink: #e6edf3;
-  --af-code-dim: #6e7681;
-  --af-code-line: rgba(240, 246, 252, 0.1);
+  --af-code-bg: #000000;
+  --af-code-ink: #f5f5f5;
+  --af-code-dim: #7a7a7a;
+  --af-code-line: rgba(255, 255, 255, 0.1);
   --af-code-accent: #58a6ff;
   --af-code-critical: #f85149;
 
   --af-shadow-soft: none;
-  --af-shadow-raised: 0 1px 2px rgba(1, 4, 9, 0.4), 0 3px 8px rgba(1, 4, 9, 0.32);
-  --af-shadow-float: 0 10px 28px rgba(1, 4, 9, 0.56), 0 1px 3px rgba(1, 4, 9, 0.4),
+  --af-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4), 0 3px 8px rgba(0, 0, 0, 0.32);
+  --af-shadow-float: 0 10px 28px rgba(0, 0, 0, 0.56), 0 1px 3px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 var(--af-glass-hairline);
   --af-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 

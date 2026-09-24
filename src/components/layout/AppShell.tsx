@@ -99,9 +99,10 @@ export function AppShell() {
     : `${sidebarWidth}px minmax(0, 1fr)`;
 
   return (
-    // `af-ambient` paints two very faint colour fields under the whole window.
-    // It is not decoration: it is what the glass panels above it refract, and
-    // without it a blurred surface is just a grey rectangle.
+    // `af-ambient` paints faint neutral fields under the whole window. It is not
+    // decoration: it is what the glass panels above it refract, and without it a
+    // blurred surface is just a grey rectangle. The fields carry no hue — the
+    // canvas is pure white or pure black and every step between is greyscale.
     <div className="af-ambient flex h-full min-h-0 flex-col bg-canvas">
       <TopBar sidebarWidth={sidebarWidth} />
 

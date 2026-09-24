@@ -41,7 +41,7 @@ export function Tooltip({
           'af-tooltip group-hover/tt:flex',
           position,
         )}
-        style={{ backgroundColor: 'rgba(20, 33, 36, 0.92)' }}
+        style={{ backgroundColor: 'rgba(0, 0, 0, 0.92)' }}
       >
         {label}
         {shortcut && (

@@ -103,6 +103,31 @@ export function formatClock(iso: string): string {
   return `${String(hours % 12 === 0 ? 12 : hours % 12).padStart(2, '0')}:${minutes} ${suffix}`;
 }
 
+/**
+ * The local calendar day of an instant, as `YYYY-MM-DD`.
+ *
+ * Built from the local date parts rather than from `toISOString()`, which is
+ * UTC: a file added at 11pm belongs to the day the user was living in, not to
+ * the day it was in London.
+ */
+export function dayKey(iso: string): string {
+  const date = new Date(iso);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** A day key back into words, for the filter chip. */
+export function formatDayKey(key: string): string {
+  const [year, month, day] = key.split('-').map(Number);
+  if (!year || !month || !day) return key;
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 export function formatDayLabel(iso: string, now: number = Date.now()): string {
   const date = new Date(iso);
   const today = new Date(now);

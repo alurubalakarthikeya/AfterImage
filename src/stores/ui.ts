@@ -42,6 +42,13 @@ export interface UIState {
   contextMenu: ContextMenuState | null;
   activeCollectionId: string | null;
   activeProjectId: string | null;
+  /**
+   * One calendar day, `YYYY-MM-DD`, or null for the whole range.
+   *
+   * Set by the timeline's day headers and cleared from the filter chip the page
+   * shows while it is on, so a filtered page always says that it is filtered.
+   */
+  activeDay: string | null;
   /** Person whose route is on screen. Only meaningful on the `person` route. */
   activePersonId: string | null;
   /** File whose "find similar" results should be shown in the inspector. */
@@ -74,6 +81,7 @@ export interface UIState {
   closeContextMenu: () => void;
   setActiveCollection: (collectionId: string | null) => void;
   setActiveProject: (projectId: string | null) => void;
+  setActiveDay: (day: string | null) => void;
   setSimilarFor: (fileId: string | null) => void;
   setComparisonFor: (fileId: string | null) => void;
   /** Close whatever overlay is open; returns true when something was closed. */
@@ -100,6 +108,7 @@ export const useUIStore = create<UIState>()((set, get) => ({
   contextMenu: null,
   activeCollectionId: null,
   activeProjectId: null,
+  activeDay: null,
   activePersonId: null,
   similarFor: null,
   comparisonFor: null,
@@ -111,6 +120,10 @@ export const useUIStore = create<UIState>()((set, get) => ({
       route,
       previousRoute: current,
       contextMenu: null,
+      // A day picked on the timeline is a filter on the page that offered it, so
+      // changing section clears it. Leaving it set would silently narrow the
+      // next section to a day the user chose somewhere else.
+      activeDay: null,
       // The id only means anything alongside its own route, so leaving forgets
       // it rather than leaving a stale person for the next visit to pick up.
       ...(route === 'person' ? {} : { activePersonId: null }),
@@ -199,6 +212,7 @@ export const useUIStore = create<UIState>()((set, get) => ({
   closeContextMenu: () => set({ contextMenu: null }),
   setActiveCollection: (activeCollectionId) => set({ activeCollectionId }),
   setActiveProject: (activeProjectId) => set({ activeProjectId }),
+  setActiveDay: (activeDay) => set({ activeDay }),
   // Visual similarity is a panel over the current page rather than a nav item:
   // the question it answers is always "like this one", which needs a subject.
   setSimilarFor: (similarFor) => set({ similarFor }),

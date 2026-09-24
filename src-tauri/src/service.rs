@@ -50,6 +50,30 @@ pub struct Description {
     pub labels: Vec<String>,
 }
 
+/// A picture made from a file that is not one.
+///
+/// `Some` when the service wrote a still (a video frame, a PDF page) into the
+/// directory it was handed, `None` when it could not — in which case the reason
+/// is logged and the file simply has no picture, which the grid already knows
+/// how to draw.
+#[derive(Debug, Clone)]
+pub struct Still {
+    pub path: String,
+    pub width: i64,
+    pub height: i64,
+    pub duration_sec: Option<f64>,
+    pub pages: Option<i64>,
+    pub engine: String,
+}
+
+/// The pages of a document, as pictures written beside the thumbnails.
+#[derive(Debug, Clone)]
+pub struct Pages {
+    pub paths: Vec<String>,
+    pub total: i64,
+    pub rendered: i64,
+}
+
 fn base(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
@@ -123,7 +147,14 @@ pub fn extract_text(port: u16, path: &str, kind: &str, file_id: &str) -> TextOut
 /// The service answers with an empty title when no vision model is installed.
 /// That is passed through untouched: the renderer falls back to filename, OCR
 /// text and metadata, and never displays a title nobody generated.
-pub fn describe(port: u16, path: &str, kind: &str, file_id: &str, text: Option<&str>) -> Option<Description> {
+pub fn describe(
+    port: u16,
+    path: &str,
+    kind: &str,
+    file_id: &str,
+    text: Option<&str>,
+    still: Option<&str>,
+) -> Option<Description> {
     let response = ureq::post(&format!("{}/index/describe", base(port)))
         .timeout(LONG)
         .send_json(json!({
@@ -131,6 +162,10 @@ pub fn describe(port: u16, path: &str, kind: &str, file_id: &str, text: Option<&
             "kind": kind,
             "fileId": file_id,
             "text": text,
+            // A video and a PDF have no pixels the model can open. When the
+            // pipeline already rendered a frame or a page, that is what the
+            // model looks at, and the file gets real tags instead of none.
+            "still": still,
         }))
         .ok()?;
     let value: serde_json::Value = response.into_json().ok()?;
@@ -161,7 +196,14 @@ pub fn describe(port: u16, path: &str, kind: &str, file_id: &str, text: Option<&
 }
 
 /// Embed one file. Returns false when the service declined or is absent.
-pub fn embed(port: u16, path: &str, kind: &str, file_id: &str, text: Option<&str>) -> bool {
+pub fn embed(
+    port: u16,
+    path: &str,
+    kind: &str,
+    file_id: &str,
+    text: Option<&str>,
+    still: Option<&str>,
+) -> bool {
     let response = ureq::post(&format!("{}/index/embed", base(port)))
         .timeout(LONG)
         .send_json(json!({
@@ -169,6 +211,7 @@ pub fn embed(port: u16, path: &str, kind: &str, file_id: &str, text: Option<&str
             "kind": kind,
             "fileId": file_id,
             "text": text,
+            "still": still,
         }))
         .ok();
 
@@ -180,6 +223,121 @@ pub fn embed(port: u16, path: &str, kind: &str, file_id: &str, text: Option<&str
         .get("indexed")
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
+}
+
+/// A picture of a file that is not one.
+///
+/// `target_dir` is a directory the webview is already allowed to read (the
+/// thumbnail folder), so the result is servable without widening any scope: the
+/// service writes the JPEG there and the interface asks for it the same way it
+/// asks for every other picture.
+///
+/// The duration and the page count come back from the same decode, which is how
+/// a video's length chip and a document's page count are real numbers rather
+/// than blanks.
+pub fn extract_still(
+    port: u16,
+    path: &str,
+    kind: &str,
+    file_id: &str,
+    target_dir: &str,
+    max_edge: i64,
+) -> Option<Still> {
+    let response = ureq::post(&format!("{}/index/still", base(port)))
+        .timeout(LONG)
+        .send_json(json!({
+            "path": path,
+            "kind": kind,
+            "fileId": file_id,
+            "targetDir": target_dir,
+            "maxEdge": max_edge,
+        }))
+        .ok()?;
+    let value: serde_json::Value = response.into_json().ok()?;
+
+    let wrote = value
+        .get("wrote")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let written = value
+        .get("path")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+
+    if !wrote {
+        // Worth saying out loud: this is the difference between a video with no
+        // thumbnail and a machine that cannot decode video at all.
+        if let Some(reason) = value.get("reason").and_then(|value| value.as_str()) {
+            log::debug!("stills: {path}: {reason}");
+        }
+        return None;
+    }
+
+    Some(Still {
+        path: written?,
+        width: value.get("width").and_then(|value| value.as_i64()).unwrap_or(0),
+        height: value.get("height").and_then(|value| value.as_i64()).unwrap_or(0),
+        duration_sec: value
+            .get("durationSeconds")
+            .and_then(|value| value.as_f64())
+            .filter(|value| *value > 0.0),
+        pages: value.get("pages").and_then(|value| value.as_i64()),
+        engine: value
+            .get("engine")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    })
+}
+
+/// Lay a document out as pictures, for the reader in the interface.
+pub fn render_pages(port: u16, path: &str, file_id: &str, target_dir: &str, limit: i64) -> Option<Pages> {
+    let response = ureq::post(&format!("{}/index/pages", base(port)))
+        .timeout(LONG)
+        .send_json(json!({
+            "path": path,
+            "fileId": file_id,
+            "targetDir": target_dir,
+            "limit": limit,
+        }))
+        .ok()?;
+    let value: serde_json::Value = response.into_json().ok()?;
+
+    let paths: Vec<String> = value
+        .get("paths")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if paths.is_empty() {
+        return None;
+    }
+
+    Some(Pages {
+        paths,
+        total: value.get("total").and_then(|value| value.as_i64()).unwrap_or(0),
+        rendered: value
+            .get("rendered")
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0),
+    })
+}
+
+/// Persist the vector index.
+///
+/// Called when the queue drains rather than after every file: the service
+/// debounces its own writes, and this is what makes the last one durable.
+pub fn flush_index(port: u16) -> bool {
+    ureq::post(&format!("{}/index/flush", base(port)))
+        .timeout(SHORT)
+        .send_json(json!({}))
+        .is_ok()
 }
 
 /// Nearest neighbours for a text query, as (file id, score).

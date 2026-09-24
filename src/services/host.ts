@@ -1,11 +1,13 @@
 import type {
   ActivityEntry,
+  AnalysisStatus,
   ArchiveCollection,
   ArchiveFile,
   ArchiveFolder,
   ArchiveTotals,
   BuildInfo,
   FileFace,
+  MediaPages,
   FileKind,
   FileVersion,
   ImageDna,
@@ -68,6 +70,14 @@ export interface FileQuery {
   favoritesOnly?: boolean;
   /** Rolling window in days, measured from the file's creation date. */
   sinceDays?: number;
+  /**
+   * One calendar day, `YYYY-MM-DD` in the machine's own zone.
+   *
+   * Narrower than `sinceDays` and not interchangeable with it: the timeline's
+   * day headers ask this question, which is "everything from the 14th" rather
+   * than "everything from the last fourteen days".
+   */
+  day?: string;
   sort?: 'recent' | 'oldest' | 'name' | 'size' | 'kind';
   limit?: number;
   offset?: number;
@@ -210,6 +220,23 @@ export interface ArchiveHost {
    * Resolves with what happened; rejects with the reason it could not start.
    */
   startService(): Promise<string>;
+  /**
+   * Queue the files the models have not looked at yet.
+   *
+   * The answer to "I installed the models after importing 8,000 files": nothing
+   * is re-imported, and the pass runs through the ordinary background queue with
+   * the ordinary progress reporting. Answers with the number of files queued.
+   */
+  analyzeLibrary(): Promise<number>;
+  /** How much of the archive the models have been through. */
+  analysisStatus(): Promise<AnalysisStatus>;
+  /**
+   * The pages of a document, rendered on this machine.
+   *
+   * Rendered rather than handed over as a PDF, because whether a webview can
+   * display a local PDF depends on a viewer plugin being installed and willing.
+   */
+  mediaPages(fileId: string): Promise<MediaPages>;
 
   // ---- the build -------------------------------------------------------- //
   /** Which build this is, and where it keeps its files. */

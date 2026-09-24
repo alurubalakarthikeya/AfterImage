@@ -14,11 +14,12 @@ export function useRouteFiles(options: { sort?: SortKey } = {}): FileQueryResult
   const route = useUIStore((state) => state.route);
   const collectionId = useUIStore((state) => state.activeCollectionId);
   const projectId = useUIStore((state) => state.activeProjectId);
+  const day = useUIStore((state) => state.activeDay);
   const sort = options.sort ?? 'recent';
 
   const query = useMemo(
-    () => routeFileQuery(route, { collectionId, projectId, sort }),
-    [route, collectionId, projectId, sort],
+    () => routeFileQuery(route, { collectionId, projectId, sort, day }),
+    [route, collectionId, projectId, sort, day],
   );
 
   return useFileQuery(query);

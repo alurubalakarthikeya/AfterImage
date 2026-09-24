@@ -87,6 +87,11 @@ LABEL_PROMPTS: dict[str, str] = {
     "product": "a product photograph on a plain background",
     "art": "a drawing, painting or illustration",
     "logo": "a logo or icon",
+    # The two image categories people keep deliberately and search for by name.
+    # Phrased the way they look, because CLIP matches on appearance and "a meme"
+    # on its own resolves to pictures of the word rather than of the format.
+    "meme": "an internet meme: a funny image with a caption written over it",
+    "wallpaper": "a desktop wallpaper, an abstract or scenic background image",
     "text": "an image that is mostly text",
     "blurry": "a blurry or out-of-focus photograph",
     "old": "an old or historical photograph",

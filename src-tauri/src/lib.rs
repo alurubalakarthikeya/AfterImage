@@ -12,6 +12,7 @@
 //! it is running.
 
 mod commands;
+mod context;
 mod db;
 mod dna;
 mod error;
@@ -55,6 +56,13 @@ pub fn run() {
 
             let connection = db::open(&database_path)?;
             db::migrate(&connection)?;
+            // The virtual collections every archive starts with. Rules, not
+            // lists: nothing is moved, and they fill in as analysis lands.
+            match db::seed_smart_collections(&connection) {
+                Ok(0) => {}
+                Ok(created) => log::info!("collections: {created} smart collections created"),
+                Err(error) => log::warn!("could not seed smart collections: {error}"),
+            }
 
             let state = Arc::new(AppState::new(connection, app_data));
 
@@ -200,6 +208,9 @@ pub fn run() {
             commands::model_status,
             commands::install_models,
             commands::start_service,
+            commands::analyze_library,
+            commands::analysis_status,
+            commands::media_pages,
             commands::grant_file_access,
             commands::organize_plan,
             commands::organize_apply,

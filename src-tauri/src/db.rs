@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::time::SystemTime;
 
-use chrono::{DateTime, Duration, Local, SecondsFormat};
+use chrono::{DateTime, Duration, Local, NaiveDate, SecondsFormat, TimeZone};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
@@ -40,7 +40,7 @@ const FILE_COLUMNS: &str = "f.id, f.name, f.path, f.kind, f.ext, f.mime, f.bytes
      f.height, f.duration_sec, f.pages, f.folder_id, f.folder_path, f.created_at, f.modified_at, \
      f.indexed_at, f.favorite, f.thumb_path, f.preview_path, f.generated_title, f.description, \
      f.labels, f.project_id, f.ocr_state, f.ocr_confidence, f.ocr_engine, f.index_state, f.hash, \
-     f.embedding_state, o.text";
+     f.embedding_state, o.text, f.context";
 
 const FILE_SOURCE: &str = "FROM files f LEFT JOIN ocr_content o ON o.file_id = f.id";
 
@@ -80,7 +80,15 @@ fn search_table_needs_rebuild(conn: &Connection) -> AppResult<bool> {
         // No table yet: the migration below creates it with every column.
         return Ok(false);
     }
-    Ok(!columns.iter().any(|column| column == "people"))
+    // Each new column this index has gained is listed here. A table missing any
+    // of them is rebuilt rather than served half-populated, because a column
+    // that is silently empty looks exactly like a column that matched nothing.
+    for required in ["people", "context"] {
+        if !columns.iter().any(|column| column == required) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Refill the full-text table from the tables that own the data.
@@ -145,6 +153,14 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             generated_title TEXT,
             description     TEXT,
             labels          TEXT NOT NULL DEFAULT '[]',
+            -- Inferred context: what this file appears to be for, from the
+            -- model's own labels plus what the pipeline measured. Never a claim
+            -- about the user's intentions, and null when nothing could be said.
+            context         TEXT,
+            -- none | analysed. Read by the backfill pass, which is how a library
+            -- that was indexed before any model was installed gets analysed
+            -- afterwards without being re-imported.
+            analysis_state  TEXT NOT NULL DEFAULT 'none',
             project_id      TEXT,
             ocr_state       TEXT NOT NULL DEFAULT 'pending',
             ocr_confidence  REAL,
@@ -171,9 +187,15 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             created_at TEXT NOT NULL
         );
 
+        -- `source` is what keeps a machine's tags and a person's tags apart.
+        -- Re-analysis replaces every 'ai' row for a file and never touches a row
+        -- the user added by hand, which is the difference between a tag list that
+        -- sharpens as the index is rebuilt and one that loses the user's own work
+        -- every time a model is installed.
         CREATE TABLE IF NOT EXISTS file_tags (
             file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
             tag_id  TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            source  TEXT NOT NULL DEFAULT 'user',
             PRIMARY KEY (file_id, tag_id)
         );
 
@@ -289,6 +311,11 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             title,
             description,
             labels,
+            -- The inferred reason this file was kept, in the words the interface
+            -- shows ("Possible context: Programming / React debugging"). It is
+            -- indexed so a natural sentence finds it, which is the whole point
+            -- of deriving it rather than only displaying it.
+            context,
             text,
             folder,
             tags,
@@ -322,6 +349,15 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
     // to keep the presentation copy that is about to be replaced, and null the
     // rest of the time.
     ensure_column(conn, "files", "previous_modified_at", "TEXT")?;
+    ensure_column(conn, "files", "context", "TEXT")?;
+    ensure_column(conn, "file_tags", "source", "TEXT NOT NULL DEFAULT 'user'")?;
+    // Whether the local models have had a look at this file yet.
+    //
+    // Kept separate from `embedding_state` on purpose: a file can be analysed
+    // and still have no vector (a text-only document in an image-only space),
+    // and conflating the two would either re-run the work forever or skip files
+    // that were never analysed at all. This is the flag a backfill pass reads.
+    ensure_column(conn, "files", "analysis_state", "TEXT NOT NULL DEFAULT 'none'")?;
 
     Ok(())
 }
@@ -356,6 +392,7 @@ fn labels_from_json(raw: &str) -> Vec<String> {
 fn row_to_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileRecord> {
     let labels: String = row.get(21)?;
     let text: Option<String> = row.get(29)?;
+    let context: Option<String> = row.get(30)?;
     let ext: String = row.get(4)?;
     Ok(FileRecord {
         id: row.get(0)?,
@@ -388,7 +425,9 @@ fn row_to_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileRecord> {
         hash: row.get(27)?,
         embedding_state: row.get(28)?,
         ocr_text: text.filter(|value| !value.trim().is_empty()),
+        context: context.filter(|value| !value.trim().is_empty()),
         tag_ids: Vec::new(),
+        machine_tag_ids: Vec::new(),
         collection_ids: Vec::new(),
     })
 }
@@ -631,6 +670,68 @@ pub fn set_index_state(conn: &Connection, file_id: &str, state: &str) -> AppResu
     Ok(())
 }
 
+pub fn set_analysis_state(conn: &Connection, file_id: &str, state: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE files SET analysis_state = ?2 WHERE id = ?1",
+        params![file_id, state],
+    )?;
+    Ok(())
+}
+
+/// Files the models have not looked at yet, oldest first.
+///
+/// The oldest first matters: a backfill over a large library should reach the
+/// pictures somebody actually kept early rather than the most recent few
+/// thousand, and the order also means an interrupted pass resumes where it
+/// stopped.
+pub fn files_needing_analysis(conn: &Connection, limit: i64) -> AppResult<Vec<(String, String, String)>> {
+    // Two reasons to look at a file, and the second one is not about models at
+    // all. A file whose 
+    // preview is missing needs the pipeline to run for the picture alone: this
+    // is how a library indexed before video and document stills existed gets
+    // them, without anybody re-importing anything. Without this clause those
+    // files are 'analysed' or 'none' and permanently invisible in the grid —
+    // a video tile with no frame and a PDF tile with no page.
+    let mut statement = conn.prepare(
+        "SELECT id, path, kind FROM files
+         WHERE index_state = 'indexed'
+           AND (
+             analysis_state != 'analysed'
+             OR (preview_path IS NULL
+                 AND kind IN ('photo', 'screenshot', 'video', 'document', 'design'))
+           )
+         ORDER BY created_at ASC
+         LIMIT ?1",
+    )?;
+    let rows = statement.query_map(params![limit], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// How much of the library the models have not looked at yet.
+pub fn analysis_progress(conn: &Connection) -> AppResult<(i64, i64)> {
+    let remaining: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM files
+         WHERE index_state = 'indexed'
+           AND (analysis_state != 'analysed'
+                OR (preview_path IS NULL
+                    AND kind IN ('photo', 'screenshot', 'video', 'document', 'design')))",
+        [],
+        |row| row.get(0),
+    )?;
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM files WHERE index_state = 'indexed'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok((total - remaining, total))
+}
+
 pub fn set_ocr_state(conn: &Connection, file_id: &str, state: &str) -> AppResult<()> {
     conn.execute(
         "UPDATE files SET ocr_state = ?2 WHERE id = ?1",
@@ -791,17 +892,68 @@ pub fn save_generated(
     title: Option<&str>,
     description: Option<&str>,
     labels: &[String],
+    context: Option<&str>,
+    tags: &[String],
 ) -> AppResult<()> {
     conn.execute(
-        "UPDATE files SET generated_title = ?2, description = ?3, labels = ?4 WHERE id = ?1",
+        "UPDATE files SET generated_title = ?2, description = ?3, labels = ?4, context = ?5
+         WHERE id = ?1",
         params![
             file_id,
             title,
             description,
-            serde_json::to_string(labels).unwrap_or_else(|_| "[]".into())
+            serde_json::to_string(labels).unwrap_or_else(|_| "[]".into()),
+            context
         ],
     )?;
+    // The labels are also written as real tags, in the same transaction as the
+    // label column.
+    //
+    // They used to live only in that column, which meant the tag list, the tag
+    // chips and every tag-based search saw a file with no tags on it while its
+    // `labels` column held four. A label the interface cannot show, filter by or
+    // search on is not a tag, it is a string nobody reads.
+    set_analysis_tags(conn, file_id, tags)?;
     Ok(())
+}
+
+/// The tags a machine put on this file, replaced wholesale.
+///
+/// Only rows with `source = 'ai'` are touched. A tag the user added by hand
+/// survives re-analysis, model installs and rebuilds — the alternative loses
+/// somebody's own work every time a better model arrives, which is the kind of
+/// thing that makes people stop tagging anything.
+///
+/// An empty list is a legitimate result and clears the machine's tags: the file
+/// was analysed and there was nothing to say about it.
+pub fn set_analysis_tags(conn: &Connection, file_id: &str, names: &[String]) -> AppResult<()> {
+    conn.execute(
+        "DELETE FROM file_tags WHERE file_id = ?1 AND source = 'ai'",
+        params![file_id],
+    )?;
+
+    for name in names {
+        let tag = ensure_tag(conn, name)?;
+        conn.execute(
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, source) VALUES (?1, ?2, 'ai')",
+            params![file_id, tag.id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Every tag that came from analysis rather than from the user.
+///
+/// This is what a smart collection can be built on and what the interface
+/// groups under "from your files": a tag nobody typed but that describes what
+/// is actually in the archive.
+pub fn analysis_tag_names(conn: &Connection) -> AppResult<Vec<String>> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT t.name FROM file_tags ft JOIN tags t ON t.id = ft.tag_id
+         WHERE ft.source = 'ai' ORDER BY t.name COLLATE NOCASE ASC",
+    )?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 /// Rebuild this file's row in the full-text index.
@@ -820,7 +972,8 @@ pub fn reindex_search_row(conn: &Connection, file_id: &str) -> AppResult<()> {
                     COALESCE((SELECT group_concat(pe.label, ' ')
                               FROM faces fa JOIN people pe ON pe.id = fa.person_id
                               WHERE fa.file_id = f.id AND pe.label IS NOT NULL
-                                AND pe.hidden = 0), '')
+                                AND pe.hidden = 0), ''),
+                    COALESCE(f.context, '')
              FROM files f
              LEFT JOIN ocr_content o ON o.file_id = f.id
              LEFT JOIN projects p ON p.id = f.project_id
@@ -836,13 +989,14 @@ pub fn reindex_search_row(conn: &Connection, file_id: &str) -> AppResult<()> {
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(7)?,
                     row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
                 ))
             },
         )
         .optional()?;
 
     conn.execute("DELETE FROM file_search WHERE file_id = ?1", params![file_id])?;
-    let Some((name, title, description, labels, text, folder, project, people)) = row else {
+    let Some((name, title, description, labels, text, folder, project, people, context)) = row else {
         return Ok(());
     };
 
@@ -860,14 +1014,15 @@ pub fn reindex_search_row(conn: &Connection, file_id: &str) -> AppResult<()> {
 
     let labels_text = labels_from_json(&labels).join(" ");
     conn.execute(
-        "INSERT INTO file_search (file_id, name, title, description, labels, text, folder, tags, project, people)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO file_search (file_id, name, title, description, labels, context, text, folder, tags, project, people)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             file_id,
             name,
             title,
             description,
             labels_text,
+            context,
             text,
             folder,
             tags,
@@ -924,17 +1079,32 @@ fn hydrate(conn: &Connection, files: &mut [FileRecord]) -> AppResult<()> {
     let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(", ");
 
     let mut tag_map: HashMap<String, Vec<String>> = HashMap::new();
+    let mut machine_tag_map: HashMap<String, Vec<String>> = HashMap::new();
     {
+        // `source` travels with the membership so the interface can tell a tag
+        // the user typed from one the models inferred. They are shown
+        // differently because they are different kinds of statement: one is the
+        // user's own word, the other is the application's opinion, and removing
+        // the second is not the same act as removing the first.
         let sql = format!(
-            "SELECT ft.file_id, ft.tag_id FROM file_tags ft WHERE ft.file_id IN ({placeholders})"
+            "SELECT ft.file_id, ft.tag_id, ft.source FROM file_tags ft
+             WHERE ft.file_id IN ({placeholders})"
         );
         let mut statement = conn.prepare(&sql)?;
         let rows = statement.query_map(params_from_iter(ids.iter()), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?;
         for row in rows {
-            let (file_id, tag_id) = row?;
-            tag_map.entry(file_id).or_default().push(tag_id);
+            let (file_id, tag_id, source) = row?;
+            if source.as_deref() == Some("ai") {
+                machine_tag_map.entry(file_id).or_default().push(tag_id);
+            } else {
+                tag_map.entry(file_id).or_default().push(tag_id);
+            }
         }
     }
 
@@ -954,7 +1124,14 @@ fn hydrate(conn: &Connection, files: &mut [FileRecord]) -> AppResult<()> {
     }
 
     for file in files.iter_mut() {
-        file.tag_ids = tag_map.remove(&file.id).unwrap_or_default();
+        // Both kinds are in `tag_ids`: every filter, count and search that works
+        // on tags keeps working unchanged. `machine_tag_ids` is the subset, for
+        // the one place that needs to draw them differently.
+        let machine = machine_tag_map.remove(&file.id).unwrap_or_default();
+        let mut all = tag_map.remove(&file.id).unwrap_or_default();
+        all.extend(machine.iter().cloned());
+        file.tag_ids = all;
+        file.machine_tag_ids = machine;
         file.collection_ids = collection_map.remove(&file.id).unwrap_or_default();
     }
     Ok(())
@@ -1062,6 +1239,26 @@ pub fn list_files(conn: &Connection, query: &FileQuery) -> AppResult<(Vec<FileRe
         values.push(Value::Text(
             (Local::now() - Duration::days(days)).to_rfc3339_opts(SecondsFormat::Secs, false),
         ));
+    }
+    if let Some(day) = query.day.as_deref().filter(|day| !day.trim().is_empty()) {
+        // Half-open, so a file added at 23:59:59 on the day belongs to that day
+        // and to nothing else. Rows are stored as RFC 3339 in local time, which
+        // is what makes the comparison correct here — and the one thing that
+        // makes the day filter mean what the header above it said.
+        if let Ok(start) = NaiveDate::parse_from_str(day.trim(), "%Y-%m-%d") {
+            let from = start
+                .and_hms_opt(0, 0, 0)
+                .and_then(|moment| Local.from_local_datetime(&moment).single());
+            let until = start
+                .succ_opt()
+                .and_then(|next| next.and_hms_opt(0, 0, 0))
+                .and_then(|moment| Local.from_local_datetime(&moment).single());
+            if let (Some(from), Some(until)) = (from, until) {
+                where_clause.push_str(" AND f.created_at >= ? AND f.created_at < ?");
+                values.push(Value::Text(from.to_rfc3339_opts(SecondsFormat::Secs, false)));
+                values.push(Value::Text(until.to_rfc3339_opts(SecondsFormat::Secs, false)));
+            }
+        }
     }
     if let Some(collection_id) = &query.collection_id {
         match collection_fragment(conn, collection_id)? {
@@ -1264,45 +1461,230 @@ pub fn detach_tag(conn: &Connection, file_id: &str, tag_id: &str) -> AppResult<(
 // Collections
 // ---------------------------------------------------------------------------
 
-fn row_to_collection(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArchiveCollection> {
-    let rule: Option<String> = row.get(4)?;
-    Ok(ArchiveCollection {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        kind: row.get(2)?,
-        surface: row.get(3)?,
-        rule: rule.and_then(|raw| serde_json::from_str::<CollectionRule>(&raw).ok()),
-        icon: row.get(5)?,
-        file_count: row.get(6)?,
-        size_bytes: row.get(7)?,
-        preview: Vec::new(),
-    })
-}
-
+/// The collections, each with the counts its card shows.
+///
+/// A smart collection has no membership rows to count — that is exactly what
+/// makes it smart — so its rule is evaluated here. Skipping that step is how a
+/// card ends up reading "0 files" beside a name that opens a full grid, which is
+/// worse than a wrong number: it is a number the user can see is wrong.
 pub fn list_collections(conn: &Connection) -> AppResult<Vec<ArchiveCollection>> {
     let mut statement = conn.prepare(
-        "SELECT id, name, kind, surface, rule, icon,
-                (SELECT COUNT(*) FROM file_collections fc WHERE fc.collection_id = collections.id),
-                (SELECT COALESCE(SUM(f.bytes), 0) FROM file_collections fc
-                   JOIN files f ON f.id = fc.file_id
-                  WHERE fc.collection_id = collections.id AND f.index_state <> 'missing')
-         FROM collections
-         ORDER BY name COLLATE NOCASE",
+        "SELECT id, name, kind, surface, rule, icon FROM collections ORDER BY name COLLATE NOCASE",
     )?;
-    let rows = statement.query_map([], row_to_collection)?;
-    let mut collections = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    })?;
 
-    for collection in collections.iter_mut() {
-        let mut statement = conn.prepare(
-            "SELECT f.thumb_path FROM file_collections fc JOIN files f ON f.id = fc.file_id
-             WHERE fc.collection_id = ?1 AND f.thumb_path IS NOT NULL
-             ORDER BY f.created_at DESC LIMIT 4",
-        )?;
-        let rows = statement.query_map(params![collection.id], |row| row.get::<_, String>(0))?;
-        collection.preview = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut collections: Vec<ArchiveCollection> = Vec::new();
+    for row in rows {
+        let (id, name, kind, surface, rule_raw, icon) = row?;
+        let rule = rule_raw
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<CollectionRule>(raw).ok());
+
+        let (file_count, size_bytes, preview) = if kind == "smart" && rule.is_some() {
+            resolve_rule(conn, &id)?
+        } else {
+            explicit_members(conn, &id)?
+        };
+
+        collections.push(ArchiveCollection {
+            id,
+            name,
+            kind,
+            surface,
+            rule,
+            icon,
+            file_count,
+            size_bytes,
+            preview,
+        });
     }
 
     Ok(collections)
+}
+
+/// Count, size and the four previews for a collection of explicit members.
+fn explicit_members(conn: &Connection, collection_id: &str) -> AppResult<(i64, i64, Vec<String>)> {
+    let totals = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(f.bytes), 0)
+           FROM file_collections fc JOIN files f ON f.id = fc.file_id
+          WHERE fc.collection_id = ?1 AND f.index_state <> 'missing'",
+        params![collection_id],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    )?;
+    let preview = previews_for(
+        conn,
+        "EXISTS (SELECT 1 FROM file_collections fc WHERE fc.file_id = f.id AND fc.collection_id = ?1)",
+        params![collection_id],
+    );
+    Ok((totals.0, totals.1, preview))
+}
+
+/// The same three things for a collection defined by a rule.
+fn resolve_rule(conn: &Connection, collection_id: &str) -> AppResult<(i64, i64, Vec<String>)> {
+    let Some((clause, values)) = collection_fragment(conn, collection_id)? else {
+        return Ok((0, 0, Vec::new()));
+    };
+    let sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(f.bytes), 0) FROM files f
+          WHERE {clause} AND f.index_state <> 'missing'"
+    );
+    let totals = conn.query_row(&sql, rusqlite::params_from_iter(values.iter()), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let preview_sql = format!(
+        "SELECT f.thumb_path FROM files f
+          WHERE {clause} AND f.index_state <> 'missing' AND f.thumb_path IS NOT NULL
+          ORDER BY f.created_at DESC LIMIT 4"
+    );
+    let mut statement = conn.prepare(&preview_sql)?;
+    let rows = statement.query_map(rusqlite::params_from_iter(values.iter()), |row| {
+        row.get::<_, String>(0)
+    })?;
+    let preview = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok((totals.0, totals.1, preview))
+}
+
+fn previews_for(
+    conn: &Connection,
+    condition: &str,
+    params: impl rusqlite::Params,
+) -> Vec<String> {
+    let sql = format!(
+        "SELECT f.thumb_path FROM files f
+          WHERE {condition} AND f.index_state <> 'missing' AND f.thumb_path IS NOT NULL
+          ORDER BY f.created_at DESC LIMIT 4"
+    );
+    let Ok(mut statement) = conn.prepare(&sql) else {
+        return Vec::new();
+    };
+    let Ok(rows) = statement.query_map(params, |row| row.get::<_, String>(0)) else {
+        return Vec::new();
+    };
+    rows.filter_map(|row| row.ok()).collect()
+}
+
+/// The virtual collections every archive is given on first run.
+///
+/// Each is a rule, not a list: no membership row is written, no file is moved,
+/// copied or renamed, and a file can be in as many of them as its own content
+/// justifies. They fill in as analysis completes, and empty out again if a file
+/// is deleted — the rule is the whole definition.
+///
+/// `(name, icon, surface, rule)`.
+const BUILT_IN_COLLECTIONS: &[(&str, &str, &str, &str)] = &[
+    (
+        "Screenshots",
+        "MonitorSmartphone",
+        "blue",
+        r#"{"kinds":["screenshot"]}"#,
+    ),
+    (
+        "Code",
+        "Braces",
+        "lavender",
+        r#"{"tags":["code","react","javascript","typescript","python","rust","java","sql","html","css","shell","terminal","error","dashboard","spreadsheet"]}"#,
+    ),
+    (
+        "UI Designs",
+        "Palette",
+        "mint",
+        r#"{"tags":["ui","design","dashboard","chart","logo"]}"#,
+    ),
+    (
+        "Documents",
+        "FileText",
+        "peach",
+        r#"{"kinds":["document"]}"#,
+    ),
+    (
+        "Receipts",
+        "Clipboard",
+        "peach",
+        r#"{"tags":["receipt","invoice","ticket"]}"#,
+    ),
+    (
+        "Presentations",
+        "Monitor",
+        "blue",
+        r#"{"tags":["presentation","slide"]}"#,
+    ),
+    (
+        "Wallpapers",
+        "Sun",
+        "mint",
+        r#"{"tags":["wallpaper"]}"#,
+    ),
+    (
+        "People",
+        "Users",
+        "lavender",
+        r#"{"tags":["person","portrait","selfie","group","baby","crowd"]}"#,
+    ),
+    (
+        "Games",
+        "Play",
+        "lavender",
+        r#"{"tags":["game"]}"#,
+    ),
+    (
+        "Meme",
+        "Smile",
+        "peach",
+        r#"{"tags":["meme"]}"#,
+    ),
+    (
+        "Products",
+        "Briefcase",
+        "mint",
+        r#"{"tags":["product"]}"#,
+    ),
+    (
+        "Videos",
+        "Film",
+        "neutral",
+        r#"{"kinds":["video"]}"#,
+    ),
+];
+
+/// Create any built-in collection the archive does not have yet.
+///
+/// Safe to call on every start: a collection is matched by name, so one the user
+/// renamed is left alone rather than recreated beside itself, and one the user
+/// deleted stays deleted for the session it was deleted in only if they delete
+/// it again — which is stated plainly here because it is a real trade-off. The
+/// alternative is a hidden "dismissed" flag for something the user never asked
+/// to keep in the first place.
+pub fn seed_smart_collections(conn: &Connection) -> AppResult<usize> {
+    let mut created = 0;
+    for (name, icon, surface, rule) in BUILT_IN_COLLECTIONS {
+        let exists: Option<String> = conn
+            .query_row(
+                "SELECT id FROM collections WHERE name = ?1 COLLATE NOCASE",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if exists.is_some() {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO collections (id, name, kind, rule, surface, icon, created_at)
+             VALUES (?1, ?2, 'smart', ?3, ?4, ?5, ?6)",
+            params![format!("col-{}", uuid_like()), name, rule, surface, icon, now()],
+        )?;
+        created += 1;
+    }
+    Ok(created)
 }
 
 pub fn create_collection(conn: &Connection, name: &str, surface: &str, icon: &str) -> AppResult<ArchiveCollection> {

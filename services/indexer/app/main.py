@@ -1,9 +1,10 @@
 """AfterImage local indexing service.
 
-Loopback only, no accounts, no telemetry. The desktop app calls three of these
-endpoints during normal use (``/index/ocr``, ``/index/embed``,
-``/search/semantic``); the rest exist for the settings screen and for poking at
-the pipeline by hand.
+Loopback only, no accounts, no telemetry. The desktop app calls a handful of
+these during normal use — ``/index/ocr``, ``/index/still``, ``/index/describe``,
+``/index/embed``, ``/index/faces``, ``/search/semantic`` and ``/index/flush`` —
+and the rest exist for the settings screen and for poking at the pipeline by
+hand.
 
 Run it with:
 
@@ -22,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import describe as describe_module
-from . import embed, faces, llm, models, ocr
+from . import embed, faces, llm, models, ocr, stills
 from .capabilities import detect, refresh
 from .config import SERVICE_VERSION, get_settings
 from .extract import extract_pdf, extract_text_file
@@ -39,12 +40,16 @@ from .schemas import (
     ModelEnsureRequest,
     ModelStatusResponse,
     OcrResponse,
+    PagesRequest,
+    PagesResponse,
     ParsedQuery,
     QueryRequest,
     SemanticHit,
     SemanticSearchRequest,
     SemanticSearchResponse,
     SimilarRequest,
+    StillRequest,
+    StillResponse,
 )
 from .vector_store import get_store
 
@@ -213,6 +218,114 @@ def index_document(request: IndexRequest) -> OcrResponse:
 
 
 # --------------------------------------------------------------------------- #
+# Stills and pages
+# --------------------------------------------------------------------------- #
+
+
+def _safe_name(value: str) -> str:
+    """A filename derived from an id, with nothing that can escape a directory."""
+    cleaned = "".join(character for character in value if character.isalnum() or character in "-_.")
+    cleaned = cleaned.strip(".") or "still"
+    return cleaned[:120]
+
+
+@app.post("/index/still", response_model=StillResponse)
+def index_still(request: StillRequest) -> StillResponse:
+    """A picture of a file that is not one.
+
+    A video gets a frame and a PDF gets its first page, so that neither is a grey
+    rectangle in a grid of photographs. Written into ``target_dir`` when the
+    caller names one — the directory the webview is allowed to read — and
+    otherwise rendered and thrown away with the dimensions reported.
+
+    The duration and the page count come from the same decode, so a length chip
+    in the interface is the file's real length rather than a guess.
+    """
+    target = _require_file(request.path)
+    engine_ready = (
+        stills.frames.available()
+        if request.kind == "video"
+        else stills.extract.pdf_engine_available()
+    )
+
+    still = stills.still_for(str(target), request.kind)
+    if still is None:
+        return StillResponse(
+            fileId=request.file_id,
+            available=engine_ready,
+            reason=(
+                "this file could not be decoded into a picture"
+                if engine_ready
+                else "no decoder for this file type is installed"
+            ),
+        )
+
+    written: str | None = None
+    if request.target_dir:
+        directory = Path(request.target_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / f"{_safe_name(request.file_id or target.stem)}.jpg"
+        destination.write_bytes(still.jpeg)
+        written = str(destination)
+
+    return StillResponse(
+        fileId=request.file_id,
+        available=True,
+        wrote=written is not None,
+        path=written,
+        width=still.width,
+        height=still.height,
+        durationSeconds=still.duration_seconds,
+        pages=still.pages,
+        engine=still.engine,
+    )
+
+
+@app.post("/index/pages", response_model=PagesResponse)
+def index_pages(request: PagesRequest) -> PagesResponse:
+    """Lay a document out as pictures, for the reader in the interface.
+
+    The webview can be handed a PDF directly, but what it does with it depends on
+    the platform's own viewer being installed and willing — which is exactly the
+    kind of "usually works" a local-first application should not depend on. These
+    pages are rendered here, from the user's own file, and served like every other
+    picture in the archive.
+    """
+    target = _require_file(request.path)
+    if not stills.extract.pdf_engine_available():
+        return PagesResponse(
+            fileId=request.file_id,
+            available=False,
+            reason="no PDF renderer is installed",
+        )
+
+    result = stills.pages_for(str(target), limit=request.limit)
+    if not result.pages:
+        return PagesResponse(
+            fileId=request.file_id,
+            available=True,
+            total=result.total,
+            reason=result.reason,
+        )
+
+    directory = Path(request.target_dir) / _safe_name(request.file_id or target.stem)
+    directory.mkdir(parents=True, exist_ok=True)
+    paths: list[str] = []
+    for index, jpeg in enumerate(result.pages):
+        destination = directory / f"{index}.jpg"
+        destination.write_bytes(jpeg)
+        paths.append(str(destination))
+
+    return PagesResponse(
+        fileId=request.file_id,
+        available=True,
+        total=result.total,
+        rendered=len(paths),
+        paths=paths,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Embeddings and retrieval
 # --------------------------------------------------------------------------- #
 
@@ -225,15 +338,36 @@ def index_describe(request: IndexRequest) -> DescribeResponse:
     never invents a title from the filename: a wrong description in the index is
     worse than no description, because it is indistinguishable from a right one.
     """
-    if request.kind not in {"photo", "screenshot", "design"}:
+    target = _require_file(request.path)
+
+    # What the model is shown, and what it is told it is looking at.
+    #
+    # A photograph is its own pixels. A video and a PDF are not: the desktop
+    # shell rendered a frame or a page on the way past, and the model looks at
+    # that instead of at a file it cannot open. The prompt set follows the
+    # *picture*, not the container — a frame of a game is a scene, a page of a
+    # report is a document, and asking the wrong set is how a screenshot ends up
+    # labelled "outdoors".
+    picture: str | None = None
+    subject = request.kind
+    if request.kind in {"photo", "screenshot", "design"}:
+        picture = str(target)
+    elif request.still and Path(request.still).is_file():
+        picture = request.still
+        subject = "document" if request.kind == "document" else "photo"
+
+    if picture is None:
         return DescribeResponse(
             fileId=request.file_id,
             available=False,
-            reason="this file type has no visual content to describe",
+            reason=(
+                "this file type has no visual content to describe"
+                if request.kind not in {"video", "document"}
+                else "no still of this file was available to look at"
+            ),
         )
 
-    target = _require_file(request.path)
-    result = describe_module.describe(str(target), request.kind)
+    result = describe_module.describe(picture, subject)  # type: ignore[arg-type]
 
     return DescribeResponse(
         fileId=request.file_id,
@@ -291,11 +425,22 @@ def index_embed(request: IndexRequest) -> EmbedResponse:
     vector = None
     modality = "image"
 
-    if request.text and request.text.strip():
+    # A still that the caller rendered is the best thing to embed for a video or
+    # a PDF: it is what the file looks like, and it lands in the same space as a
+    # text query through CLIP. Only when there is no still does a document fall
+    # back to its own text.
+    picture = (
+        request.still
+        if request.still and Path(request.still).is_file()
+        else (str(target) if request.kind in {"photo", "screenshot", "design"} else None)
+    )
+
+    if picture is not None and request.kind in {"photo", "screenshot", "video", "design", "document"}:
+        vector = embed.embed_image(picture)
+        modality = "image"
+    elif request.text and request.text.strip():
         vector = embed.embed_text(request.text)
         modality = "text"
-    elif request.kind in {"photo", "screenshot", "video", "design"}:
-        vector = embed.embed_image(str(target))
     elif target.suffix.lower() in {".pdf", ".md", ".txt"}:
         text = extract_text_file(str(target)) if target.suffix.lower() != ".pdf" else ""
         if not text and target.suffix.lower() == ".pdf":
@@ -304,26 +449,44 @@ def index_embed(request: IndexRequest) -> EmbedResponse:
         modality = "text"
 
     if vector is None:
+        space = embed.active_space()
         return EmbedResponse(
             fileId=request.file_id,
             modality=modality,  # type: ignore[arg-type]
             dimensions=0,
             model="unavailable",
             indexed=False,
-            reason="no embedding model installed",
+            reason=(
+                "no embedding model installed"
+                if space is None
+                # The text-only space has nothing to say about a picture, and
+                # saying it anyway would put numbers in the index that cannot be
+                # compared to a query.
+                else f"this file has no vector in the {space} space"
+            ),
         )
 
     key = request.file_id or str(target)
     store.add([key], [vector])
-    store.save()
+    # Debounced: the whole matrix is rewritten on save, so saving per file would
+    # be quadratic. `/index/flush` is what guarantees the last one lands.
+    store.maybe_save()
 
     return EmbedResponse(
         fileId=request.file_id,
         modality=modality,  # type: ignore[arg-type]
         dimensions=len(vector),
-        model=get_settings().image_model if modality == "image" else get_settings().text_model,
+        model=embed.describe()["label"],  # type: ignore[arg-type]
         indexed=True,
     )
+
+
+@app.post("/index/flush")
+def index_flush() -> dict[str, object]:
+    """Persist the vector index. Called when the desktop queue drains."""
+    store = get_store()
+    store.save()
+    return {"backend": store.backend, "indexedVectors": store.count(), "dimensions": store.dimensions}
 
 
 @app.post("/search/semantic", response_model=SemanticSearchResponse)

@@ -93,6 +93,48 @@ fn write_still(source: &Path, target: &Path, max_edge: u32) -> Option<()> {
     Some(())
 }
 
+/// Build the thumbnail and the presentation copy from a picture that already
+/// exists — a video frame or a PDF page the service rendered.
+///
+/// This is the path a file takes when it cannot decode itself. The service
+/// writes one high-resolution JPEG into `media/`, and both derivatives the
+/// interface needs come from it, so a video has the same thumbnail-and-preview
+/// pair as a photograph and the grid does not need a second code path.
+///
+/// Returns the thumbnail and the presentation copy, both now on disk.
+pub fn derive_from(dir: &Path, file_id: &str, source: &Path) -> Option<(String, String)> {
+    let still = image::open(source).ok()?;
+    std::fs::create_dir_all(dir).ok()?;
+    let previews = dir.join("previews");
+    std::fs::create_dir_all(&previews).ok()?;
+
+    let thumbnail = dir.join(format!("{file_id}.jpg"));
+    still
+        .thumbnail(MAX_EDGE, MAX_EDGE)
+        .save_with_format(&thumbnail, ImageFormat::Jpeg)
+        .ok()?;
+
+    let preview = previews.join(format!("{file_id}.jpg"));
+    still
+        .thumbnail(PREVIEW_MAX_EDGE, PREVIEW_MAX_EDGE)
+        .save_with_format(&preview, ImageFormat::Jpeg)
+        .ok()?;
+
+    Some((
+        thumbnail.to_string_lossy().to_string(),
+        preview.to_string_lossy().to_string(),
+    ))
+}
+
+/// Where the service should drop a still it rendered for this file.
+pub fn media_path(dir: &Path, file_id: &str) -> std::path::PathBuf {
+    dir.join("media").join(format!("{file_id}.jpg"))
+}
+
+pub fn media_dir(dir: &Path) -> std::path::PathBuf {
+    dir.join("media")
+}
+
 fn write_video_frame(source: &Path, target: &Path, max_edge: u32) -> Option<()> {
     if !ffmpeg_available() {
         return None;
@@ -123,6 +165,10 @@ fn write_video_frame(source: &Path, target: &Path, max_edge: u32) -> Option<()> 
 pub fn remove(dir: &Path, file_id: &str) {
     let _ = std::fs::remove_file(dir.join(format!("{file_id}.jpg")));
     let _ = std::fs::remove_file(dir.join("previews").join(format!("{file_id}.jpg")));
+    // The still a video or a document was rendered from, and the pages the
+    // reader laid out, are all copies of this file's own pixels.
+    let _ = std::fs::remove_file(media_path(dir, file_id));
+    let _ = std::fs::remove_dir_all(dir.join("pages").join(file_id));
     // Kept versions are copies of this file's own pixels, so they go with it.
     crate::versions::remove(dir, file_id);
 }

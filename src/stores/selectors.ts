@@ -7,6 +7,7 @@ import type {
   Tag,
 } from '@/types';
 import type { FileQuery } from '@/services/host';
+import { dayKey } from '@/utils/format';
 
 /** Pure derivations shared by pages. Kept out of stores so they stay testable. */
 
@@ -78,28 +79,37 @@ export const KIND_EMPTY: Record<FileKind, { title: string; detail: string }> = {
  */
 export function routeFileQuery(
   route: RouteId,
-  options: { collectionId?: string | null; projectId?: string | null; sort?: SortKey } = {},
+  options: {
+    collectionId?: string | null;
+    projectId?: string | null;
+    sort?: SortKey;
+    /** One calendar day, `YYYY-MM-DD`, set by the timeline's day headers. */
+    day?: string | null;
+  } = {},
 ): FileQuery | null {
   const sort = options.sort ?? 'recent';
+  // A day narrows whatever the route already means: "the 14th" on the photos
+  // page is photographs from the 14th, not every file from the 14th.
+  const day = options.day ? { day: options.day } : {};
   switch (route) {
     case 'photos':
-      return { kinds: ['photo'], sort };
+      return { kinds: ['photo'], sort, ...day };
     case 'screenshots':
-      return { kinds: ['screenshot'], sort };
+      return { kinds: ['screenshot'], sort, ...day };
     case 'documents':
-      return { kinds: ['document'], sort };
+      return { kinds: ['document'], sort, ...day };
     case 'videos':
-      return { kinds: ['video'], sort };
+      return { kinds: ['video'], sort, ...day };
     case 'projects':
       // Nothing is filed until the user picks a project, so there is no page to
       // fetch and no reason to read the whole archive to render an empty state.
-      return options.projectId ? { projectId: options.projectId, sort } : null;
+      return options.projectId ? { projectId: options.projectId, sort, ...day } : null;
     case 'collections':
       return options.collectionId
-        ? { collectionId: options.collectionId, sort }
+        ? { collectionId: options.collectionId, sort, ...day }
         : null;
     case 'all':
-      return { sort };
+      return { sort, ...day };
     default:
       return null;
   }
@@ -130,18 +140,24 @@ export function topTags(tags: Tag[], limit = 12): Tag[] {
 }
 
 /** Group files by calendar day for the timeline view. */
-export function groupByDay(files: ArchiveFile[]): Array<{ label: string; files: ArchiveFile[] }> {
+/**
+ * Files grouped by the local calendar day they were added on.
+ *
+ * The key is `YYYY-MM-DD` rather than a formatted date, because the header is a
+ * control: pressing a day asks the index for that day, and an index cannot be
+ * asked a question phrased as "Thu Sep 24 2026".
+ */
+export function groupByDay(files: ArchiveFile[]): Array<{ key: string; files: ArchiveFile[] }> {
   const buckets = new Map<string, ArchiveFile[]>();
   for (const file of files) {
-    const key = new Date(file.createdAt).toDateString();
+    const key = dayKey(file.createdAt);
     const bucket = buckets.get(key) ?? [];
     bucket.push(file);
     buckets.set(key, bucket);
   }
   return [...buckets.entries()]
-    .map(([key, bucket]) => ({ key, label: key, files: bucket }))
-    .sort((a, b) => Date.parse(b.files[0].createdAt) - Date.parse(a.files[0].createdAt))
-    .map(({ label, files: bucket }) => ({ label, files: bucket }));
+    .map(([key, bucket]) => ({ key, files: bucket }))
+    .sort((a, b) => Date.parse(b.files[0].createdAt) - Date.parse(a.files[0].createdAt));
 }
 
 export function activityByKind(activity: ActivityEntry[]): ActivityEntry[] {

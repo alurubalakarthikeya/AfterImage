@@ -70,6 +70,14 @@ export interface ArchiveFile {
   indexedAt: string;
   favorite: boolean;
   tagIds: string[];
+  /**
+   * The subset of `tagIds` the models inferred rather than the user typing.
+   *
+   * Both are real tags — every filter and search treats them identically — but
+   * they are drawn differently, because one is the user's own word and the other
+   * is the application's opinion about a file.
+   */
+  machineTagIds: string[];
   collectionIds: string[];
   projectId: string | null;
   /** Absolute path to the generated thumbnail, when one exists. */
@@ -87,6 +95,13 @@ export interface ArchiveFile {
   description: string | null;
   /** Visual labels with confidence above the configured floor. */
   labels: string[];
+  /**
+   * What this file appears to be for, inferred from its own content —
+   * "Programming / React debugging". Always shown after "Possible context",
+   * because it is an inference and is presented as one. Absent when nothing
+   * could be said honestly.
+   */
+  context?: string | null;
   /** Text recovered by OCR or a document text layer. */
   ocrText?: string;
   ocrConfidence?: number;
@@ -324,6 +339,32 @@ export interface IndexStatus {
   lastScanAt: string | null;
   /** Set when the pipeline stopped for a reason worth telling the user about. */
   problem: string | null;
+}
+
+/**
+ * How far the local models have got through the archive.
+ *
+ * Real counts from the database, which is what lets the settings screen say
+ * "4,120 of 8,003 files analysed" instead of showing a bar that means nothing.
+ */
+export interface AnalysisStatus {
+  analysed: number;
+  total: number;
+  remaining: number;
+  /** How many distinct tags the models have produced so far. */
+  tags: number;
+}
+
+/**
+ * The pages of one document, rendered for the reader.
+ *
+ * `total` is how many pages the document has, which is not how many were
+ * rendered: a long scan is laid out up to a limit, and the reader says so
+ * rather than implying the file ends where the pictures do.
+ */
+export interface MediaPages {
+  paths: string[];
+  total: number;
 }
 
 /**

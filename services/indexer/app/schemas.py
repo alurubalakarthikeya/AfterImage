@@ -23,12 +23,23 @@ Kind = Literal[
 
 
 class IndexRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     path: str = Field(description="Absolute path to the file to process")
     kind: Kind = "other"
-    file_id: str | None = Field(default=None, description="Index row id, when known")
+    file_id: str | None = Field(default=None, alias="fileId")
     text: str | None = Field(
         default=None,
         description="Already-extracted text, so embedding need not re-read the file",
+    )
+    still: str | None = Field(
+        default=None,
+        description=(
+            "Path to a rendered still of this file. A video and a PDF have no "
+            "pixels a vision model can read directly, so the desktop shell hands "
+            "over the frame or page it already rendered rather than making the "
+            "service decode the file a second time."
+        ),
     )
 
 
@@ -65,6 +76,58 @@ class DescribeResponse(BaseModel):
     labels: list[str] = []
     engine: str = "none"
     available: bool = False
+    reason: str | None = None
+
+
+class StillRequest(BaseModel):
+    """Make a picture of a file that is not one.
+
+    ``target_dir`` is where the JPEG is written when it is given, by the same
+    rule as the face crops: the desktop shell owns the directory the webview is
+    allowed to read, so the service writes into the directory it is handed
+    rather than choosing one.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    path: str
+    kind: Kind = "other"
+    file_id: str | None = Field(default=None, alias="fileId")
+    target_dir: str | None = Field(default=None, alias="targetDir")
+    max_edge: int = Field(default=1600, alias="maxEdge")
+
+
+class StillResponse(BaseModel):
+    fileId: str | None = None
+    available: bool = False
+    wrote: bool = False
+    path: str | None = None
+    width: int = 0
+    height: int = 0
+    # Real, from the container/header — never estimated from the index.
+    durationSeconds: float | None = None
+    pages: int | None = None
+    engine: str = "none"
+    reason: str | None = None
+
+
+class PagesRequest(BaseModel):
+    """Lay out the pages of a document so the interface can show it."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    path: str
+    file_id: str | None = Field(default=None, alias="fileId")
+    target_dir: str = Field(alias="targetDir")
+    limit: int = 40
+
+
+class PagesResponse(BaseModel):
+    fileId: str | None = None
+    available: bool = False
+    total: int = 0
+    rendered: int = 0
+    paths: list[str] = []
     reason: str | None = None
 
 

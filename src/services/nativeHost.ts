@@ -1,5 +1,6 @@
 import type {
   ActivityEntry,
+  AnalysisStatus,
   ArchiveCollection,
   ArchiveFile,
   ArchiveFolder,
@@ -8,6 +9,7 @@ import type {
   FileVersion,
   ImageDna,
   IndexStatus,
+  MediaPages,
   ModelStatus,
   OrganizePlan,
   OrganizeReport,
@@ -186,6 +188,9 @@ export function createNativeHost(): ArchiveHost {
     modelStatus: () => invoke<ModelStatus>('model_status'),
     installModels: (bundles) => invoke<void>('install_models', { bundles }),
     startService: () => invoke<string>('start_service'),
+    analyzeLibrary: () => invoke<number>('analyze_library'),
+    analysisStatus: () => invoke<AnalysisStatus>('analysis_status'),
+    mediaPages: (fileId) => invoke<MediaPages>('media_pages', { fileId }),
     grantFileAccess: (fileId) => invoke<string>('grant_file_access', { fileId }),
 
     async pickOrganizeDestination() {

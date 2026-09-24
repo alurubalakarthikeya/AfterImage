@@ -1,5 +1,6 @@
 import type {
   ActivityEntry,
+  AnalysisStatus,
   ArchiveCollection,
   ArchiveFile,
   ArchiveFolder,
@@ -211,6 +212,17 @@ export function createDevelopmentHost(): ArchiveHost {
       refuse('Opening the original file — the browser preview only has previews'),
     startService: () =>
       refuse('Starting the indexer — the browser preview has no process to start'),
+    // The dev host has no models, so there is nothing to analyse with, and the
+    // settings screen is told that rather than shown a button that does nothing.
+    analyzeLibrary: () => refuse('Analysing the library — the models live in the desktop build'),
+    analysisStatus: async (): Promise<AnalysisStatus> => ({
+      analysed: 0,
+      total: 0,
+      remaining: 0,
+      tags: 0,
+    }),
+    mediaPages: () =>
+      refuse('Laying out document pages — the browser preview renders thumbnails only'),
 
     // The build stamp is worth reporting here too: it is how a person checks
     // which bundle the preview is serving while the desktop build is elsewhere.

@@ -1,6 +1,6 @@
 [package]
 name = "afterimage"
-version = "0.1.1"
+version = "0.1.2"
 description = "AfterImage — a local-first desktop application for your personal digital archive"
 authors = ["AfterImage"]
 edition = "2021"

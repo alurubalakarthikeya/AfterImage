@@ -25,7 +25,7 @@ export function Scrim({
         blur && 'backdrop-blur-[2px]',
         className,
       )}
-      style={{ backgroundColor: 'rgba(15, 21, 20, 0.34)' }}
+      style={{ backgroundColor: 'rgba(0, 0, 0, 0.34)' }}
     />
   );
 }

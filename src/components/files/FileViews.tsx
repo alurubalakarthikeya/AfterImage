@@ -4,8 +4,9 @@ import { useArchiveStore } from '@/stores/archive';
 import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
 import type { FileQueryResult } from '@/hooks/useFileQuery';
-import { formatCount } from '@/utils/format';
+import { formatCount, formatDayKey } from '@/utils/format';
 import { Button } from '@/components/common/Button';
+import { Icon } from '@/components/common/Icon';
 import { FileGrid } from './FileGrid';
 import { FileList } from './FileList';
 import { FileTimeline } from './FileTimeline';
@@ -35,6 +36,8 @@ export function FileViews({
   onOpen?: (fileId: string) => void;
 }) {
   const viewMode = useUIStore((state) => state.viewMode);
+  const activeDay = useUIStore((state) => state.activeDay);
+  const setActiveDay = useUIStore((state) => state.setActiveDay);
   const thumbnailSize = useSettingsStore((state) => state.thumbnailSize);
   const openFile = useArchiveStore((state) => state.openFile);
   const addFolder = useArchiveStore((state) => state.addFolder);
@@ -57,6 +60,29 @@ export function FileViews({
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
+      {/* A filtered page says that it is filtered, in the same place it would
+          otherwise be silent about it. Clicking a day on the timeline narrows
+          the whole page, and a page that narrows without saying so is how
+          somebody concludes their archive has lost files. */}
+      {activeDay && (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveDay(null)}
+            className="inline-flex items-center gap-1.5 rounded-pill bg-surface-3 py-1 pl-2.5 pr-1.5 text-2xs font-medium text-ink transition-colors duration-150 hover:bg-sunken"
+          >
+            <Icon name="CalendarDays" size={11} strokeWidth={2} />
+            {formatDayKey(activeDay)}
+            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full text-ink-3 hover:text-ink">
+              <Icon name="X" size={10} strokeWidth={2.6} />
+            </span>
+          </button>
+          <span className="text-2xs text-ink-3">
+            {loading ? 'Loading…' : `${formatCount(total)} from this day`}
+          </span>
+        </div>
+      )}
+
       {viewMode === 'list' ? (
         <FileList files={files} loading={loading} onOpen={handleOpen} />
       ) : viewMode === 'timeline' ? (

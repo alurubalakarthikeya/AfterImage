@@ -225,7 +225,7 @@ export function Comparison() {
                   <span
                     aria-hidden="true"
                     className="pointer-events-none absolute inset-y-0 w-px bg-white/90"
-                    style={{ left: `${reveal}%`, boxShadow: '0 0 0 1px rgba(15,21,20,0.28)' }}
+                    style={{ left: `${reveal}%`, boxShadow: '0 0 0 1px rgba(0,0,0,0.28)' }}
                   />
                   <div
                     className="absolute inset-y-0"

@@ -333,6 +333,18 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
               {project ? ` · ${project.name}` : ''}
               {file.indexState !== 'indexed' ? ` · ${file.indexState}` : ''}
             </p>
+            {/* What the file appears to be for, inferred from its own content.
+
+                Prefaced with "Possible context" every time it is shown, and
+                absent rather than generic when there is no evidence: the one
+                thing this line must never do is read as the application knowing
+                why somebody kept a file. */}
+            {file.context && (
+              <p className="mt-1 text-2xs leading-relaxed text-ink-2">
+                <span className="text-ink-3">Possible context: </span>
+                {file.context}
+              </p>
+            )}
           </div>
           <Tooltip label="Close inspector" side="left">
             <IconButton size="sm" label="Clear selection" onClick={clearSelection}>
@@ -434,7 +446,16 @@ function SingleFileInspector({ file }: { file: ArchiveFile }) {
           </Section>
         )}
 
-        <Section title="Tags">
+        <Section
+          title="Tags"
+          action={
+            file.machineTagIds.length > 0 ? (
+              <span className="text-2xs text-ink-3">
+                {file.machineTagIds.length} inferred
+              </span>
+            ) : undefined
+          }
+        >
           <TagEditor file={file} />
         </Section>
 

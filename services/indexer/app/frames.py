@@ -31,6 +31,16 @@ _FALLBACK_TIME = 1.0
 _jpeg_params: list[int] | None = None
 
 
+def available() -> bool:
+    """True when OpenCV is importable, so a video can be decoded at all."""
+    try:
+        import cv2  # noqa: F401
+
+        return True
+    except Exception:  # pragma: no cover - depends on the install
+        return False
+
+
 @dataclass
 class VideoFrame:
     jpeg: bytes

@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
+use crate::context;
 use crate::db::{self, STATE_FAILED, STATE_INDEXED};
 use crate::error::{AppError, AppResult};
 use crate::models::IndexStatus;
@@ -34,6 +35,13 @@ use crate::service::{self, FaceOutcome, TextOutcome};
 use crate::state::AppState;
 use crate::thumbs;
 use crate::versions;
+
+/// Long edge of the still rendered for a video or a document.
+///
+/// The presentation size, not the thumbnail size: both derivatives the
+/// interface needs are cut from this one picture, so asking for the smaller of
+/// the two would leave the hero permanently soft.
+const STILL_MAX_EDGE: i64 = 1600;
 
 #[derive(Debug, Clone)]
 pub struct Job {
@@ -156,6 +164,13 @@ fn worker(app: AppHandle, state: Arc<AppState>, receiver: Receiver<Job>) {
             // The queue draining is when a regroup becomes worth doing, and when
             // the interface should stop showing a half-built set of people.
             let _ = app.emit("archive://changed", "index");
+            // And it is when the vector index is written to disk. The service
+            // debounces its own saves, so this is what makes the last few
+            // vectors durable rather than "probably saved".
+            let port = state.service_port.load(Ordering::Relaxed);
+            if port > 0 {
+                service::flush_index(port);
+            }
         }
     }
 }
@@ -224,9 +239,49 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
         db::set_index_state(&conn, &job.file_id, db::STATE_PROCESSING)?;
     }
 
-    // ---- 1. Dimensions and thumbnails -------------------------------------
+    // ---- 1. Dimensions, stills and thumbnails ------------------------------
     let source = std::path::Path::new(&job.path);
-    let dimensions = thumbs::dimensions(source);
+    let mut dimensions = thumbs::dimensions(source);
+
+    // A video and a document are not pictures, so the shell cannot decode them
+    // and used to leave both as a grey rectangle in a grid of images. The
+    // service can: OpenCV's wheels carry their own video decoder, and PyMuPDF
+    // is already the PDF engine. It renders one high-resolution still into the
+    // media folder and reports the file's real duration or page count from the
+    // same decode.
+    //
+    // Nothing is attempted when local processing is off: the file simply has no
+    // thumbnail, which is the same state it was in before this existed.
+    let mut still: Option<String> = None;
+    let mut duration: Option<f64> = None;
+    let mut pages: Option<i64> = None;
+    if service_enabled && matches!(job.kind.as_str(), "video" | "document") {
+        let media = thumbs::media_dir(&state.thumbnail_dir);
+        if std::fs::create_dir_all(&media).is_ok() {
+            if let Some(rendered) = service::extract_still(
+                port,
+                &job.path,
+                &job.kind,
+                &job.file_id,
+                &media.to_string_lossy(),
+                STILL_MAX_EDGE,
+            ) {
+                if dimensions.is_none() && rendered.width > 0 && rendered.height > 0 {
+                    dimensions = Some((rendered.width, rendered.height));
+                }
+                duration = rendered.duration_sec;
+                pages = rendered.pages;
+                log::debug!(
+                    "pipeline: {} still rendered by {} at {}x{}",
+                    job.path,
+                    rendered.engine,
+                    rendered.width,
+                    rendered.height
+                );
+                still = Some(rendered.path);
+            }
+        }
+    }
 
     // A file whose bytes moved since the last pass was edited in some other
     // application. Save the presentation copy that is about to be replaced
@@ -237,11 +292,30 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
         versions::keep_previous_preview(&conn, &state.thumbnail_dir, &job.file_id)
     };
 
-    let thumbnail = thumbs::generate(&state.thumbnail_dir, &job.file_id, &job.path, &job.kind);
+    // The thumbnail and the presentation copy. A file the shell can decode goes
+    // through the decoder; one it cannot goes through the still the service just
+    // rendered, so both paths end with the same pair of files on disk.
+    //
     // The bigger derivative is what the Home hero shows. It is generated here,
     // once, from the user's own file, so the hero is always a real photograph
     // from this library — never a bundled or borrowed image.
-    let preview = thumbs::generate_preview(&state.thumbnail_dir, &job.file_id, &job.path, &job.kind);
+    let (thumbnail, preview) = match still.as_deref() {
+        Some(rendered) => match thumbs::derive_from(
+            &state.thumbnail_dir,
+            &job.file_id,
+            std::path::Path::new(rendered),
+        ) {
+            Some((thumbnail, preview)) => (Some(thumbnail), Some(preview)),
+            None => {
+                log::debug!("pipeline: the still of {} could not be read back", job.path);
+                (None, None)
+            }
+        },
+        None => (
+            thumbs::generate(&state.thumbnail_dir, &job.file_id, &job.path, &job.kind),
+            thumbs::generate_preview(&state.thumbnail_dir, &job.file_id, &job.path, &job.kind),
+        ),
+    };
 
     // The earlier copy is only worth keeping if something replaced it. When the
     // format cannot be decoded again the existing presentation stays on screen,
@@ -268,7 +342,9 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
     {
         let conn = state.db()?;
         if let Some((width, height)) = dimensions {
-            db::set_probe(&conn, &job.file_id, Some(width), Some(height), None, None)?;
+            db::set_probe(&conn, &job.file_id, Some(width), Some(height), pages, duration)?;
+        } else if pages.is_some() || duration.is_some() {
+            db::set_probe(&conn, &job.file_id, None, None, pages, duration)?;
         }
         if let Some(path) = thumbnail.as_deref() {
             db::set_thumbnail(&conn, &job.file_id, path)?;
@@ -311,30 +387,73 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
         db::set_ocr_state(&conn, &job.file_id, "none")?;
     }
 
-    // ---- 3. Generated title and labels ------------------------------------
-    // Only the local vision model writes these. When it is not installed the
-    // call returns empty and the record keeps its filename, text and metadata —
-    // no title is invented to fill the gap.
-    if service_enabled && matches!(job.kind.as_str(), "photo" | "screenshot" | "design" | "document") {
-        if let Some(described) = service::describe(port, &job.path, &job.kind, &job.file_id, text.as_deref()) {
-            if described.title.is_some() || described.description.is_some() || !described.labels.is_empty() {
-                let conn = state.db()?;
-                db::save_generated(
-                    &conn,
-                    &job.file_id,
-                    described.title.as_deref(),
-                    described.description.as_deref(),
-                    &described.labels,
-                )?;
-                db::reindex_search_row(&conn, &job.file_id)?;
-            }
+    // ---- 3. Understanding: title, labels, tags and context -----------------
+    //
+    // Only the local vision model writes a title or a visual label. When it is
+    // not installed the call returns empty and nothing is invented to fill the
+    // gap — the file keeps its filename, its text and its metadata.
+    //
+    // The tags and the context line are computed either way, from whatever
+    // evidence exists: the model's labels when there are any, the file's own
+    // extracted text, and its name. That is what makes the feature work on a
+    // machine with no model installed and keep working, better, once one is.
+    let analysable = matches!(
+        job.kind.as_str(),
+        "photo" | "screenshot" | "design" | "document" | "video"
+    );
+    if service_enabled && analysable {
+        let described = service::describe(
+            port,
+            &job.path,
+            &job.kind,
+            &job.file_id,
+            text.as_deref(),
+            still.as_deref(),
+        );
+        let labels = described
+            .as_ref()
+            .map(|value| value.labels.clone())
+            .unwrap_or_default();
+
+        let name = source
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_else(|| job.path.clone());
+        let tags = context::derive_tags(&job.kind, &name, &labels, text.as_deref());
+        let inferred = context::infer(&job.kind, &name, &labels, text.as_deref());
+
+        {
+            let conn = state.db()?;
+            db::save_generated(
+                &conn,
+                &job.file_id,
+                described.as_ref().and_then(|value| value.title.as_deref()),
+                described
+                    .as_ref()
+                    .and_then(|value| value.description.as_deref()),
+                &labels,
+                inferred.as_deref(),
+                &tags,
+            )?;
+            // The row is marked analysed even when every field above is empty:
+            // "looked at, nothing to say" is a result, and recording it is what
+            // stops a backfill from re-reading the same files forever.
+            db::set_analysis_state(&conn, &job.file_id, "analysed")?;
+            db::reindex_search_row(&conn, &job.file_id)?;
         }
     }
 
     // ---- 4. Embeddings ----------------------------------------------------
     if semantic_enabled {
         let indexed = service_enabled
-            && service::embed(port, &job.path, &job.kind, &job.file_id, text.as_deref());
+            && service::embed(
+                port,
+                &job.path,
+                &job.kind,
+                &job.file_id,
+                text.as_deref(),
+                still.as_deref(),
+            );
         let conn = state.db()?;
         db::set_embedding_state(&conn, &job.file_id, if indexed { "indexed" } else { "unavailable" })?;
     }

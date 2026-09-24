@@ -1,5 +1,6 @@
 import type {
   ActivityEntry,
+  AnalysisStatus,
   ArchiveCollection,
   ArchiveFile,
   ArchiveFolder,
@@ -446,6 +447,10 @@ export function createWebHost(): ArchiveHost {
       kind,
       ext,
       mime: file.type || MIME[ext] || 'application/octet-stream',
+      // Nothing in the browser infers tags, so every tag on a browser-archive
+      // file is one the user typed. The field is still populated rather than
+      // absent, so the inspector's tag group behaves the same in both builds.
+      machineTagIds: [],
       bytes: file.size,
       folderId: folder.id,
       folderPath: `${folder.name}${entry.parent ? `/${entry.parent}` : ''}`,
@@ -1143,6 +1148,19 @@ export function createWebHost(): ArchiveHost {
 
     installModels: () => refuse('Downloading models'),
     startService: () => refuse('Starting the indexer'),
+    // Tags and context are derived in the browser build too — from the filename,
+    // the file's own bytes and any text pulled out of it — so this is a real
+    // count rather than a stub. What a browser cannot do is run the vision
+    // models, and the settings screen says so.
+    analyzeLibrary: async () => 0,
+    analysisStatus: async (): Promise<AnalysisStatus> => ({
+      analysed: 0,
+      total: 0,
+      remaining: 0,
+      tags: 0,
+    }),
+    mediaPages: () =>
+      refuse('Laying out document pages — the browser build has no PDF renderer'),
 
     async buildInfo(): Promise<BuildInfo> {
       const records = await footprint();
