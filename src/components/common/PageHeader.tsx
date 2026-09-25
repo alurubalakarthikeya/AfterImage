@@ -34,7 +34,13 @@ export function PageHeader({
         </div>
         {subtitle && <p className="mt-1 text-meta text-ink-2">{subtitle}</p>}
       </div>
-      {children && <div className="flex items-center gap-2">{children}</div>}
+      {children && (
+        // Wrapped rather than forced onto one line: at a phone's width the
+        // toolbar breaks into rows instead of hanging over the edge of the
+        // window, and wide enough to hold them the controls sit right-aligned
+        // exactly as before.
+        <div className="flex flex-wrap items-center justify-end gap-2">{children}</div>
+      )}
     </header>
   );
 }

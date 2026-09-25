@@ -4,7 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>AfterImage — Your Digital Archive</title>
+    <title>AfterImage</title>
+    <!--
+      Relative, so the same markup works from a Tauri webview, from
+      http://localhost:1420/, and from a copy of the site served under a
+      sub-path. The 32px and 48px renditions exist because the artwork is
+      1314 x 1197 — shipping the source as a favicon asks every tab to fetch a
+      megabyte to draw a 16 pixel square.
+    -->
+    <link rel="icon" type="image/png" href="./favicon-32.png" sizes="32x32" />
+    <link rel="icon" type="image/png" href="./favicon-48.png" sizes="48x48" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="application-name" content="AfterImage" />
 
     <!--
       The theme has to be right before the first paint, and the bundle that owns
@@ -16,7 +27,29 @@
       (function () {
         var resolved = 'light';
         try {
-          var raw = localStorage.getItem('afterimage.settings.v1');
+          var raw = null;
+          try {
+            raw = localStorage.getItem('afterimage.settings.v1');
+          } catch (error) {
+            /* storage denied — the cookie below is why this still works */
+          }
+          /*
+           * The cookie is the second copy of the same preference, written on
+           * every change so that a browser which has evicted site data — or a
+           * fresh private session — still opens in the theme you chose rather
+           * than in the default and then snapping to it.
+           */
+          if (!raw) {
+            var named = 'afterimage.settings.v1=';
+            var parts = document.cookie ? document.cookie.split(';') : [];
+            for (var i = 0; i < parts.length; i++) {
+              var entry = parts[i].replace(/^\s+/, '');
+              if (entry.indexOf(named) === 0) {
+                raw = decodeURIComponent(entry.slice(named.length));
+                break;
+              }
+            }
+          }
           var stored = raw ? JSON.parse(raw).state : null;
           var appearance = (stored && stored.appearance) || 'light';
           var prefersDark =

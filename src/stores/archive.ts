@@ -425,9 +425,20 @@ export const useArchiveStore = create<ArchiveStoreState>()((set, get) => {
         set((state) => ({ files: state.files.filter((file) => !fileIds.includes(file.id)) }));
         const ui = useUIStore.getState();
         ui.selectMany(ui.selectedFileIds.filter((id) => !fileIds.includes(id)));
+        // The desktop build moves files to the operating system's trash; a
+        // browser can only lift them out of the archive, and saying "moved to
+        // trash" about that would promise a bin that does not exist.
+        const trashed = getHost().capabilities.trash;
+        const count = fileIds.length;
         notice(
           'success',
-          fileIds.length === 1 ? 'Moved to trash' : `${fileIds.length} files moved to trash`,
+          trashed
+            ? count === 1
+              ? 'Moved to trash'
+              : `${count} files moved to trash`
+            : count === 1
+              ? 'Removed from the archive — the file itself is untouched on disk'
+              : `${count} files removed from the archive — the files themselves are untouched on disk`,
         );
         await get().refresh();
       } catch (error) {

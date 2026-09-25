@@ -70,6 +70,7 @@ export function MediaViewer({
   const [src, setSrc] = useState<string | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [pages, setPages] = useState<string[]>([]);
+  const [embedded, setEmbedded] = useState<string | null>(null);
   const [totalPages, setTotalPages] = useState(0);
   const [pageIndex, setPageIndex] = useState(0);
   const [playbackFailed, setPlaybackFailed] = useState(false);
@@ -107,6 +108,8 @@ export function MediaViewer({
     setPages([]);
     setTotalPages(0);
     setPageIndex(0);
+    setEmbedded(null);
+    setBlocked(false);
 
     void (async () => {
       try {
@@ -115,7 +118,16 @@ export function MediaViewer({
         setPages(rendered.paths.map((path) => getHost().assetUrl(path)));
         setTotalPages(rendered.total);
       } catch {
-        if (!cancelled) setBlocked(true);
+        // No rendered pages — which is what a browser says, because it has no
+        // rasteriser. It does have a PDF viewer of its own, though: handing the
+        // original to that renders the document here, offline, exactly like the
+        // desktop pages would — so that is the next answer rather than silence.
+        try {
+          const path = await getHost().grantFileAccess(file.id);
+          if (!cancelled) setEmbedded(getHost().assetUrl(path));
+        } catch {
+          if (!cancelled) setBlocked(true);
+        }
       }
     })();
 
@@ -151,6 +163,17 @@ export function MediaViewer({
 
   if (kind === 'pdf') {
     if (blocked) return null;
+    if (embedded) {
+      return (
+        <div className={cn('relative flex h-full w-full bg-surface-sunken', className)}>
+          <iframe
+            src={embedded}
+            title={`Preview of ${file.generatedTitle ?? file.name}`}
+            className="h-full w-full border-0"
+          />
+        </div>
+      );
+    }
     if (pages.length === 0) {
       return (
         <div

@@ -178,7 +178,7 @@ export function Settings() {
               onChange={(event) => settings.setUserName(event.target.value)}
               placeholder="Your name"
               spellCheck={false}
-              className="h-9 w-[200px] rounded-input border border-line-strong bg-surface px-3 text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-line-strong"
+              className="h-9 w-[200px] min-w-0 rounded-input border border-line-strong bg-surface px-3 text-meta text-ink outline-none transition-colors duration-150 placeholder:text-ink-3 focus:border-line-strong"
             />
           </div>
         </Row>
@@ -362,7 +362,7 @@ export function Settings() {
         </div>
 
         <form
-          className="flex items-center gap-2"
+          className="flex flex-wrap items-center gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             const value = newFolder.trim();
@@ -377,7 +377,7 @@ export function Settings() {
             placeholder="~/Pictures/Screenshots"
             aria-label="Folder path"
             spellCheck={false}
-            className="h-9 flex-1 rounded-input border border-line-strong bg-surface px-3 font-mono text-meta text-ink outline-none transition-colors focus:border-line-strong"
+            className="h-9 min-w-0 flex-[1_1_180px] rounded-input border border-line-strong bg-surface px-3 font-mono text-meta text-ink outline-none transition-colors focus:border-line-strong"
           />
           <Button type="submit" variant="secondary" size="sm" icon="Plus" disabled={!newFolder.trim()}>
             Add

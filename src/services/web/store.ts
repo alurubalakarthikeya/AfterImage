@@ -59,7 +59,16 @@ export interface StoredVersion extends FileVersion {
 }
 
 const DB_NAME = 'afterimage.archive';
-const DB_VERSION = 2;
+// v3: `files` is keyed by `file.id`.
+//
+// The store used to declare a flat `id` key while holding the record the way
+// every other store holds one — the payload under its own property — so an
+// IndexedDB evaluation of the key path found nothing and every write of a file
+// was refused with a `DataError`. The archive kept working from memory and
+// emptied itself on reload. A version bump is what makes an existing database
+// drop the mis-keyed store and rebuild it: without one, the upgrade callback
+// never runs and the old key path stays.
+const DB_VERSION = 3;
 
 type StoreName =
   | 'folders'
@@ -87,16 +96,17 @@ const STORES: StoreName[] = [
 /**
  * What each store is keyed by.
  *
- * `folders` is keyed by the folder's own id inside the record rather than on the
- * record itself, because a stored folder *is* the pair of a record and the
- * handle that grants access to it. IndexedDB understands a dotted key path, and
- * using one keeps the handle and the record in the same row: there is no state
- * where a grant exists without the folder it belongs to.
+ * `folders` and `files` are keyed inside the record rather than on the record
+ * itself, because both hold a payload (`folder`, `file`) beside its platform
+ * side — the handle that grants access to it. IndexedDB understands a dotted
+ * key path, and using one keeps the handle and the record in the same row:
+ * there is no state where a grant exists without the record it belongs to.
  */
 function keyPathFor(name: StoreName): string {
   if (name === 'meta') return 'key';
   if (name === 'blobs') return 'fileId';
   if (name === 'folders') return 'folder.id';
+  if (name === 'files') return 'file.id';
   return 'id';
 }
 

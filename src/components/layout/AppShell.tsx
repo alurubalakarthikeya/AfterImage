@@ -2,6 +2,7 @@ import type { RouteId } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useUIStore } from '@/stores/ui';
+import { cn } from '@/utils/format';
 import { Home } from '@/pages/Home';
 import { AllFiles } from '@/pages/AllFiles';
 import { Photos } from '@/pages/Photos';
@@ -17,6 +18,7 @@ import { Settings } from '@/pages/Settings';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { FirstRun } from './FirstRun';
 import { Sidebar } from './Sidebar';
+import { MobileDock } from './MobileDock';
 import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
 import { Inspector } from './Inspector';
@@ -65,6 +67,12 @@ function RouteView({ route }: { route: RouteId }) {
  * inspector — so the search field in the title bar lines up with the first
  * column of cards and the toolbar lines up with the inspector. Below 1280px the
  * inspector steps out of the way rather than crushing the workspace.
+ *
+ * Below 768px — a phone — the grid is one column: the sidebar leaves the
+ * layout entirely and reappears as the pill dock at the bottom of the window
+ * (`MobileDock`), which buys the workspace everything the rail used to hold and
+ * puts the navigation where a thumb already is. The desktop layout above that
+ * line is the same pixels it has always been.
  */
 export function AppShell() {
   const route = useUIStore((state) => state.route);
@@ -72,6 +80,7 @@ export function AppShell() {
   const inspectorOpen = useUIStore((state) => state.inspectorOpen);
   const selectedFileId = useUIStore((state) => state.selectedFileId);
   const roomForInspector = useMediaQuery('(min-width: 1280px)');
+  const roomForSidebar = useMediaQuery('(min-width: 768px)');
   const folders = useArchiveStore((state) => state.folders);
   const status = useArchiveStore((state) => state.status);
 
@@ -94,9 +103,11 @@ export function AppShell() {
   const showInspector = inspectorOpen && roomForInspector && !needsSetup;
   const sidebarWidth = sidebarCollapsed ? SIDEBAR_NARROW : SIDEBAR_WIDE;
 
-  const columns = showInspector
-    ? `${sidebarWidth}px minmax(0, 1fr) ${INSPECTOR_WIDTH}px`
-    : `${sidebarWidth}px minmax(0, 1fr)`;
+  // One column on a phone — no rail, no inspector — and the desktop's two (or
+  // three) above the line, byte for byte as before.
+  const columns = `${
+    roomForSidebar ? `${sidebarWidth}px ` : ''
+  }minmax(0, 1fr)${showInspector ? ` ${INSPECTOR_WIDTH}px` : ''}`;
 
   return (
     // `af-ambient` paints faint neutral fields under the whole window. It is not
@@ -107,9 +118,19 @@ export function AppShell() {
       <TopBar sidebarWidth={sidebarWidth} />
 
       {/* The window's own inset: 12px against every edge, including under the
-          title bar, so the frame reads as a frame and the content as content. */}
-      <div className="grid min-h-0 flex-1 gap-3 px-3 pb-3 pt-3" style={{ gridTemplateColumns: columns }}>
-        <Sidebar />
+          title bar, so the frame reads as a frame and the content as content.
+          On a phone the inset answers for two more things: a little more air
+          under the top bar, and the dock + status bar the bottom edge now
+          carries — without it the last row of every page would sit under the
+          navigation. The desktop values below 768px's line are untouched. */}
+      <div
+        className={cn(
+          'grid min-h-0 flex-1 gap-3 px-3',
+          roomForSidebar ? 'pt-3 pb-3' : 'pt-4 pb-[72px]',
+        )}
+        style={{ gridTemplateColumns: columns }}
+      >
+        {roomForSidebar && <Sidebar />}
         <main
           className="min-h-0 overflow-y-auto overflow-x-hidden"
           aria-label="Workspace"
@@ -131,6 +152,7 @@ export function AppShell() {
       </div>
 
       <StatusBar />
+      {!roomForSidebar && <MobileDock />}
       <DropOverlay />
     </div>
   );

@@ -59,7 +59,7 @@ export function RecentFiles({ className }: { className?: string }) {
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <PillTabs
             tabs={TABS.map((item) => ({ id: item.id, label: item.label }))}
             value={tab}

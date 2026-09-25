@@ -107,9 +107,16 @@
   --af-track: rgba(0, 0, 0, 0.08);
 
   /* Status — the only colours besides the accent that carry meaning:
-     success, warning, failure. */
+     success, warning, failure.
+
+     Warning is deliberately achromatic. It used to be a warm gold, which on a
+     page that is otherwise black, white and the one accent made every notice
+     shout louder than the thing it was about — a paused indexer was the most
+     saturated object on the screen. The treatment is unchanged: a hairline
+     border, a 10% wash, ink for the words. Only the hue went, so a warning
+     still reads as a warning and no longer as a highlight. */
   --af-positive: #1a7f37;
-  --af-caution: #9a6700;
+  --af-caution: rgba(0, 0, 0, 0.6);
   --af-critical: #cf222e;
 
   /* Collection tones. Muted on purpose: a page of collection cards is a set,
@@ -187,7 +194,7 @@
   --af-track: rgba(255, 255, 255, 0.1);
 
   --af-positive: #3fb950;
-  --af-caution: #d29922;
+  --af-caution: rgba(255, 255, 255, 0.5);
   --af-critical: #f85149;
 
   --af-mint: #12261a;

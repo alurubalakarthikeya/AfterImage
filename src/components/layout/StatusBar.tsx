@@ -35,7 +35,7 @@ export function StatusBar() {
   const rate = index.perMinute > 0 ? `${formatCount(index.perMinute)}/min` : null;
 
   return (
-    <footer className="glass relative z-30 flex h-7 shrink-0 items-center gap-3 border-t border-line px-3 text-2xs text-ink-3">
+    <footer className="glass relative z-30 flex h-7 shrink-0 items-center gap-3 overflow-hidden border-t border-line px-3 text-2xs text-ink-3">
       {/* Left: what the pipeline is doing, which is the whole point of the bar. */}
       <button
         type="button"
@@ -60,7 +60,7 @@ export function StatusBar() {
               {index.state === 'scanning' ? 'Scanning' : 'Indexing'} {formatCount(queued)}
             </span>
             {index.currentFile && (
-              <span className="max-w-[280px] truncate font-mono text-ink-3/80">
+              <span className="max-w-[90px] truncate font-mono text-ink-3/80 sm:max-w-[280px]">
                 {index.currentFile}
               </span>
             )}

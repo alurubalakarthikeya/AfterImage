@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useArchiveStore } from '@/stores/archive';
 import { useUIStore } from '@/stores/ui';
 import { useSettingsStore } from '@/stores/settings';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { cn, formatRelativeTime } from '@/utils/format';
 import { Icon } from '@/components/common/Icon';
 import { IconButton, IconButtonGroup } from '@/components/common/IconButton';
@@ -107,22 +108,33 @@ export function TopBar({ sidebarWidth }: { sidebarWidth: number }) {
   const userName = useSettingsStore((state) => state.userName);
   const accountLabel = useSettingsStore((state) => state.accountLabel);
 
+  // Below 768px the right-hand cluster keeps only what cannot be reached
+  // elsewhere: importing a folder and the account. The view switcher lives on
+  // the command palette, notifications on Home, the theme and the inspector in
+  // Settings — and the inspector has no column of its own at this width anyway.
+  // The search field needs the room more than four icons do, and everything
+  // above this line renders exactly as it always has.
+  const roomy = useMediaQuery('(min-width: 768px)');
+
   return (
     <TitleBar
       left={
         <div
           data-tauri-drag-region
           className="flex shrink-0 items-center pl-3.5"
-          style={{ width: Math.max(sidebarWidth, BRAND_WIDTH) }}
+          style={{ width: roomy ? Math.max(sidebarWidth, BRAND_WIDTH) : 40 }}
         >
-          {/* The wordmark never collapses.
+          {/* The wordmark never collapses — on the desktop build.
 
               It used to be the sidebar's width and disappear with it, which
               meant the application lost its own name the moment the user
               reclaimed 150 pixels of a small window. The block is now at least
               as wide as the name, so the column it aligns with when expanded is
-              a preference and the identity is not. */}
-          <Logo compact size="sm" />
+              a preference and the identity is not. On a phone the trade flips:
+              the mark alone carries the identity and the 100 pixels it frees
+              belong to the search field, which is the one control everybody
+              reaches for first. */}
+          {roomy ? <Logo compact size="sm" /> : <Logo markOnly size="sm" />}
         </div>
       }
       center={<SearchBar />}
@@ -135,48 +147,52 @@ export function TopBar({ sidebarWidth }: { sidebarWidth: number }) {
             </IconButton>
           </Tooltip>
 
-          <IconButtonGroup>
-            <Tooltip label="Grid view" side="bottom">
-              <IconButton
-                size="sm"
-                label="Grid view"
-                active={viewMode === 'grid'}
-                onClick={() => setViewMode('grid')}
-              >
-                <Icon name="LayoutGrid" size={15} strokeWidth={2} />
+          {roomy && (
+            <IconButtonGroup>
+              <Tooltip label="Grid view" side="bottom">
+                <IconButton
+                  size="sm"
+                  label="Grid view"
+                  active={viewMode === 'grid'}
+                  onClick={() => setViewMode('grid')}
+                >
+                  <Icon name="LayoutGrid" size={15} strokeWidth={2} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="List view" side="bottom">
+                <IconButton
+                  size="sm"
+                  label="List view"
+                  active={viewMode === 'list'}
+                  onClick={() => setViewMode('list')}
+                >
+                  <Icon name="List" size={15} strokeWidth={2} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip label="Timeline view" side="bottom">
+                <IconButton
+                  size="sm"
+                  label="Timeline view"
+                  active={viewMode === 'timeline'}
+                  onClick={() => setViewMode('timeline')}
+                >
+                  <Icon name="Rows3" size={15} strokeWidth={2} />
+                </IconButton>
+              </Tooltip>
+            </IconButtonGroup>
+          )}
+
+          {roomy && <NotificationBell />}
+
+          {roomy && <ThemeControl />}
+
+          {roomy && (
+            <Tooltip label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} side="bottom">
+              <IconButton label="Toggle inspector" active={inspectorOpen} onClick={toggleInspector}>
+                <Icon name="PanelRight" size={17} strokeWidth={1.9} />
               </IconButton>
             </Tooltip>
-            <Tooltip label="List view" side="bottom">
-              <IconButton
-                size="sm"
-                label="List view"
-                active={viewMode === 'list'}
-                onClick={() => setViewMode('list')}
-              >
-                <Icon name="List" size={15} strokeWidth={2} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip label="Timeline view" side="bottom">
-              <IconButton
-                size="sm"
-                label="Timeline view"
-                active={viewMode === 'timeline'}
-                onClick={() => setViewMode('timeline')}
-              >
-                <Icon name="Rows3" size={15} strokeWidth={2} />
-              </IconButton>
-            </Tooltip>
-          </IconButtonGroup>
-
-          <NotificationBell />
-
-          <ThemeControl />
-
-          <Tooltip label={inspectorOpen ? 'Hide inspector' : 'Show inspector'} side="bottom">
-            <IconButton label="Toggle inspector" active={inspectorOpen} onClick={toggleInspector}>
-              <Icon name="PanelRight" size={17} strokeWidth={1.9} />
-            </IconButton>
-          </Tooltip>
+          )}
 
           <Tooltip label={`${userName || 'You'} · ${accountLabel}`} side="bottom">
             <button

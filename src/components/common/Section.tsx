@@ -47,12 +47,19 @@ export function Row({
   children: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-line pb-3 last:border-b-0 last:pb-0">
+    // `flex-wrap` and the gap pair rather than a single gap: on a narrow
+    // screen the control drops beneath its label instead of pushing the row
+    // wider than the page. `max-w-full` is what lets it stop at the row's own
+    // width when the control has a fixed size — a control wider than its row
+    // would otherwise stay on its own line and hang over the edge of the
+    // window. On any screen wide enough to hold both on one line the rendering
+    // is exactly what it was before.
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line pb-3 last:border-b-0 last:pb-0">
       <div className="min-w-0">
         <div className="text-body text-ink">{label}</div>
         {hint && <div className="mt-0.5 text-2xs text-ink-3">{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="max-w-full shrink-0">{children}</div>
     </div>
   );
 }

@@ -11,6 +11,7 @@ import type {
   FileVersion,
   ImageDna,
   IndexStatus,
+  MediaPages,
   ModelStatus,
   OrganizePlan,
   PeopleSnapshot,
@@ -1149,18 +1150,32 @@ export function createWebHost(): ArchiveHost {
     installModels: () => refuse('Downloading models'),
     startService: () => refuse('Starting the indexer'),
     // Tags and context are derived in the browser build too — from the filename,
-    // the file's own bytes and any text pulled out of it — so this is a real
-    // count rather than a stub. What a browser cannot do is run the vision
-    // models, and the settings screen says so.
+    // the file's own bytes and any text pulled out of it — at import time, so a
+    // freshly imported file is already as read as this build gets. What a
+    // browser cannot do is run the vision models, and the settings screen says
+    // so. Queuing anything would ask for work there is nothing to do.
     analyzeLibrary: async () => 0,
-    analysisStatus: async (): Promise<AnalysisStatus> => ({
-      analysed: 0,
-      total: 0,
-      remaining: 0,
-      tags: 0,
-    }),
-    mediaPages: () =>
-      refuse('Laying out document pages — the browser build has no PDF renderer'),
+    analysisStatus: async (): Promise<AnalysisStatus> => {
+      await load();
+      // Every record is classified and described as it is indexed, so the whole
+      // archive counts as read rather than none of it. `tags` stays zero: a
+      // browser has no label model, and every tag here is one a person typed.
+      return {
+        analysed: files.size,
+        total: files.size,
+        remaining: 0,
+        tags: 0,
+      };
+    },
+    // No rasteriser lives in a page, so the pages never arrive — but the caller
+    // does not stop there: `MediaViewer` falls back to laying the PDF out in
+    // this browser's own viewer when this rejects. Rejecting quietly is what
+    // makes that handover invisible rather than a warning about a renderer that
+    // is about to do the work.
+    async mediaPages(): Promise<MediaPages> {
+      await load();
+      throw new Error('This browser lays out PDFs with its own viewer.');
+    },
 
     async buildInfo(): Promise<BuildInfo> {
       const records = await footprint();
@@ -1183,10 +1198,7 @@ export function createWebHost(): ArchiveHost {
      */
     async grantFileAccess(fileId: string): Promise<string> {
       await load();
-      const held = files.get(fileId);
-      if (!held?.handle) throw new Error('That file is not in this browser\u2019s archive.');
-      const file = await held.handle.getFile();
-      return rememberUrl(originalKey(fileId), file);
+      return grantOriginal(fileId);
     },
 
     async imageDna(fileId: string): Promise<ImageDna> {
@@ -1489,12 +1501,187 @@ export function createWebHost(): ArchiveHost {
       return activity.slice(0, limit);
     },
 
-    // ---- what only the desktop build can do ------------------------------ //
-    openFile: () => refuse('Opening files'),
-    openWith: () => refuse('Opening files with another app'),
-    revealFile: () => refuse('Revealing files in the file manager'),
-    moveToTrash: () => refuse('Deleting files'),
-    renameFile: () => refuse('Renaming files on disk'),
+    // ---- file actions ---------------------------------------------------- //
+    // The disk itself is out of reach — no page can rearrange files behind the
+    // browser's back — but every one of these buttons has a real answer here:
+    // open in a tab, save a copy, say where the file lives, lift it out of the
+    // archive, or rename it on disk through the grant the picker already holds.
+
+    async openFile(path: string): Promise<void> {
+      await load();
+      const held = findByPath(path);
+      if (!held) throw new Error('That file is not in this browser\u2019s archive.');
+
+      // The blank tab is opened synchronously, while the click is still the
+      // current gesture. Waiting for the file first would mean calling
+      // `window.open` after an await, which popup blockers treat as a pop-up
+      // that nobody asked for.
+      const tab = window.open('', '_blank');
+      if (!tab) {
+        throw new Error('This browser blocked the new tab — allow pop-ups for this site to open files in a tab.');
+      }
+      try {
+        tab.location.href = await grantOriginal(held.file.id);
+        tab.focus();
+      } catch (error) {
+        tab.close();
+        throw error;
+      }
+    },
+
+    async openWith(path: string): Promise<void> {
+      await load();
+      const held = findByPath(path);
+      if (!held) throw new Error('That file is not in this browser\u2019s archive.');
+
+      // "Open with another app" is the browser's download: the file lands in
+      // the downloads folder and whatever application the user picks opens it.
+      const url = await grantOriginal(held.file.id);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = held.file.name;
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      notice('info', `“${held.file.name}” was saved to your downloads — open it with any app you like.`);
+    },
+
+    async revealFile(path: string): Promise<void> {
+      await load();
+      const held = findByPath(path);
+      // There is no file manager to hand the folder to, so the folder's name is
+      // the closest honest answer: it says where the file is without pretending
+      // this page can walk somebody there.
+      const folder = held ? folders.get(held.file.folderId)?.folder.name : null;
+      notice(
+        'info',
+        folder
+          ? `“${held?.file.name}” lives in ${folder}. A web page cannot open your file manager — that folder is on disk where you granted it.`
+          : 'A web page cannot open your file manager.',
+      );
+    },
+
+    /**
+     * Take files out of this browser's archive.
+     *
+     * The originals are never touched: a page has no trash to move them to, and
+     * deleting outright what the desktop build only bins would be a different
+     * promise made quietly. What is removed is the record, the thumbnail and
+     * the kept copies — the archive stops showing the file, and a rescan is the
+     * way it comes back, which is exactly what it deserves given the file is
+     * still on disk.
+     */
+    async moveToTrash(fileIds: string[]): Promise<void> {
+      await load();
+      for (const fileId of fileIds) {
+        const held = files.get(fileId);
+        if (!held) continue;
+        files.delete(fileId);
+        blobs.delete(fileId);
+        releaseUrl(thumbKey(fileId));
+        releaseUrl(previewKey(fileId));
+        releaseUrl(originalKey(fileId));
+        for (const version of kept.get(fileId) ?? []) {
+          releaseUrl(versionKey(version.id));
+          await remove('versions', version.id);
+        }
+        kept.delete(fileId);
+        await remove('files', fileId);
+        await remove('blobs', fileId);
+      }
+      if (fileIds.length === 0) return;
+      refreshTagCounts();
+      refreshCollectionCounts();
+      emit({ type: 'files-changed', reason: 'delete' });
+    },
+
+    /**
+     * Rename the file itself, through the grant the folder picker holds.
+     *
+     * Renaming only the record would look right until the next scan read the
+     * disk and put the old name back, so the bytes are renamed for real. The
+     * browser's own `move()` is preferred — it is one syscall and keeps the
+     * file's dates — and where that is missing the standard pair (write the
+     * new name, drop the old entry) does the same job. Either way the record's
+     * id is rebuilt, because the id embeds the relative path: an id that
+     * disagreed with disk would be treated as vanished by the next scan and
+     * the tags, favourite and collections hanging off it would be lost.
+     */
+    async renameFile(fileId: string, name: string): Promise<void> {
+      await load();
+      const held = files.get(fileId);
+      if (!held) throw new Error('That file is not in this browser\u2019s archive.');
+      const previous = held.file;
+
+      // Slashes would turn a name into a path; the extension is kept unless
+      // another one was typed, which is what the rename dialog promises.
+      let clean = name.trim().replace(/[\\/]/g, '');
+      if (!clean || clean === previous.name) return;
+      if (previous.ext && !clean.includes('.')) clean = `${clean}.${previous.ext}`;
+
+      const renamed = await renameOnDisk(previous, clean);
+      if (!renamed.ok) {
+        throw new Error(
+          renamed.reason === 'taken'
+            ? `A file called “${clean}” is already in that folder.`
+            : renamed.reason === 'denied'
+              ? 'This browser was not allowed to write to that folder, so the file keeps its name.'
+              : 'This browser cannot rename files on disk.',
+        );
+      }
+
+      const folder = folders.get(previous.folderId);
+      const folderPrefix = `web:${previous.folderId}:`;
+      const relative = previous.id.startsWith(folderPrefix)
+        ? previous.id.slice(folderPrefix.length)
+        : previous.path.split('/').slice(1).join('/');
+      const slash = relative.lastIndexOf('/');
+      const newRelative = slash >= 0 ? `${relative.slice(0, slash + 1)}${clean}` : clean;
+      const newId = `${folderPrefix}${newRelative}`;
+
+      const next: ArchiveFile = {
+        ...previous,
+        id: newId,
+        name: clean,
+        path: `${folder?.folder.name ?? previous.path.split('/')[0]}/${newRelative}`,
+        thumbPath: thumbKey(newId),
+        previewPath: previewKey(newId),
+      };
+
+      // Everything keyed by the old id follows it to the new one.
+      const heldBlobs = blobs.get(previous.id);
+      files.delete(previous.id);
+      blobs.delete(previous.id);
+      releaseUrl(thumbKey(previous.id));
+      releaseUrl(previewKey(previous.id));
+      releaseUrl(originalKey(previous.id));
+
+      const carried: StoredBlobs = { ...(heldBlobs ?? { fileId: newId }), fileId: newId };
+      blobs.set(newId, carried);
+      if (carried.thumb) rememberUrl(thumbKey(newId), carried.thumb);
+      if (carried.preview) rememberUrl(previewKey(newId), carried.preview);
+
+      const versions = kept.get(previous.id);
+      if (versions) {
+        kept.delete(previous.id);
+        const carriedVersions = versions.map((version) => ({ ...version, fileId: newId }));
+        kept.set(newId, carriedVersions);
+        for (const version of carriedVersions) await put('versions', version);
+      }
+
+      files.set(newId, { file: next, handle: renamed.handle });
+      await put('files', files.get(newId) as StoredFile);
+      if (heldBlobs) {
+        await remove('blobs', previous.id);
+        await put('blobs', carried);
+      }
+      await remove('files', previous.id);
+
+      refreshTagCounts();
+      refreshCollectionCounts();
+      emit({ type: 'files-changed', reason: 'metadata' });
+    },
 
     pickOrganizeDestination: () => refuse('Choosing a folder to file files into'),
 
@@ -1526,6 +1713,123 @@ export function createWebHost(): ArchiveHost {
       listeners.clear();
     },
   };
+
+  // -------------------------------------------------------------------------
+  // File actions
+  // -------------------------------------------------------------------------
+
+  /**
+   * The stored record behind the display path the renderer hands back.
+   *
+   * The store's file actions take `file.path` rather than an id — the desktop
+   * build identifies a file by where it is — so a browser archive answers the
+   * same question by looking the path up.
+   */
+  function findByPath(path: string): StoredFile | null {
+    for (const entry of files.values()) {
+      if (entry.file.path === path) return entry;
+    }
+    return null;
+  }
+
+  /**
+   * The original file itself, as a URL this page owns.
+   *
+   * One URL per file, keyed and remembered, so a grid, a viewer and a new tab
+   * all point at the same object rather than each holding a copy.
+   */
+  async function grantOriginal(fileId: string): Promise<string> {
+    const held = files.get(fileId);
+    if (!held?.handle) throw new Error('That file is not in this browser\u2019s archive.');
+    const file = await held.handle.getFile();
+    return rememberUrl(originalKey(fileId), file);
+  }
+
+  type DiskRename =
+    | { ok: true; handle: FileSystemFileHandle }
+    | { ok: false; reason: 'taken' | 'denied' | 'unsupported' };
+
+  /**
+   * Rename the bytes on disk, through the grant the folder picker holds.
+   *
+   * Two routes to the same outcome. The browser's own `move()` is one
+   * operation and keeps the file's dates; where it is missing, the portable
+   * pair — write the new name, drop the old entry — does the same job with the
+   * same guarantee, because the old name is only removed after the new file is
+   * fully written. A name that is already taken refuses instead of overwriting
+   * whatever is behind it.
+   */
+  async function renameOnDisk(file: ArchiveFile, target: string): Promise<DiskRename> {
+    const held = files.get(file.id);
+    const folder = folders.get(file.folderId);
+    if (!held?.handle || !folder?.handle) return { ok: false, reason: 'unsupported' };
+
+    const folderPrefix = `web:${file.folderId}:`;
+    const relative = file.id.startsWith(folderPrefix)
+      ? file.id.slice(folderPrefix.length)
+      : file.path.split('/').slice(1).join('/');
+    const segments = relative.split('/');
+    const oldName = segments.pop() ?? file.name;
+
+    // Walk from the granted root to the directory holding the file: a rename
+    // happens inside a directory, and the browser has to be shown which one.
+    let directory: FileSystemDirectoryHandle = folder.handle;
+    try {
+      for (const segment of segments) directory = await directory.getDirectoryHandle(segment);
+    } catch {
+      return { ok: false, reason: 'unsupported' };
+    }
+
+    // A name already taken must refuse rather than overwrite the file behind it.
+    try {
+      await directory.getFileHandle(target);
+      return { ok: false, reason: 'taken' };
+    } catch {
+      /* not found — the name is free */
+    }
+
+    // Widening the grant from read to readwrite, asked for from the click that
+    // is doing the renaming: browsers want a gesture behind that prompt.
+    const mode = { mode: 'readwrite' as const };
+    try {
+      if ((await directory.queryPermission(mode)) !== 'granted') {
+        if ((await directory.requestPermission(mode)) !== 'granted') {
+          return { ok: false, reason: 'denied' };
+        }
+      }
+    } catch {
+      return { ok: false, reason: 'denied' };
+    }
+
+    const movable = held.handle as FileSystemFileHandle & {
+      move?: (destination: string) => Promise<void>;
+    };
+    if (typeof movable.move === 'function') {
+      try {
+        await movable.move(target);
+        return { ok: true, handle: held.handle };
+      } catch {
+        /* fall through to the portable pair */
+      }
+    }
+
+    try {
+      const destination = await directory.getFileHandle(target, { create: true });
+      const stream = await destination.createWritable();
+      await stream.write(await held.handle.getFile());
+      await stream.close();
+      await directory.removeEntry(oldName);
+      return { ok: true, handle: destination };
+    } catch {
+      // A half-written target is litter; the old name still holds the file.
+      try {
+        await directory.removeEntry(target);
+      } catch {
+        /* nothing left behind */
+      }
+      return { ok: false, reason: 'unsupported' };
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Folder pickers

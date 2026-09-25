@@ -145,7 +145,7 @@ export function Organizer() {
           label="Destination"
           hint="A folder for AfterImage to file into. It becomes part of the archive, so what is moved stays indexed."
         >
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span
               className={cn(
                 'max-w-[280px] truncate font-mono text-2xs',
@@ -175,7 +175,7 @@ export function Organizer() {
               : 'Moving files into place is part of the desktop build — a web page cannot write to your folders.'
           }
         >
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               size="sm"

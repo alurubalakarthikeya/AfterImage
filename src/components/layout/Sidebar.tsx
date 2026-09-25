@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ArchiveCollection, ContextMenuItem, RouteId } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useCollectionStore } from '@/stores/collections';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { usePeopleStore } from '@/stores/people';
 import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
@@ -85,7 +86,11 @@ function Row({
 }
 
 export function Sidebar() {
-  const collapsed = useUIStore((state) => state.sidebarCollapsed);
+  const storedCollapsed = useUIStore((state) => state.sidebarCollapsed);
+  const roomForLabels = useMediaQuery('(min-width: 768px)');
+  // On a phone the rail is always collapsed. The preference itself is left
+  // alone — widening the window restores exactly the sidebar that was chosen.
+  const collapsed = roomForLabels ? storedCollapsed : true;
   const route = useUIStore((state) => state.route);
   const navigate = useUIStore((state) => state.navigate);
   const activeCollectionId = useUIStore((state) => state.activeCollectionId);
@@ -165,23 +170,27 @@ export function Sidebar() {
       aria-label="Primary"
     >
       {/* The brand lives in the title bar, where the window's identity belongs.
-          What is left here is the control that resizes the column. */}
-      <div
-        className={cn(
-          'flex items-center pb-2',
-          collapsed ? 'justify-center px-0' : 'justify-end px-0.5',
-        )}
-      >
-        <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} side="right">
-          <IconButton
-            size="sm"
-            label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            onClick={toggleSidebar}
-          >
-            <Icon name="PanelLeft" size={15} strokeWidth={1.9} />
-          </IconButton>
-        </Tooltip>
-      </div>
+          What is left here is the control that resizes the column — and on a
+          phone there is nothing to resize: the rail is already the whole
+          column, so the control would promise an expansion that cannot fit. */}
+      {roomForLabels && (
+        <div
+          className={cn(
+            'flex items-center pb-2',
+            collapsed ? 'justify-center px-0' : 'justify-end px-0.5',
+          )}
+        >
+          <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} side="right">
+            <IconButton
+              size="sm"
+              label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              onClick={toggleSidebar}
+            >
+              <Icon name="PanelLeft" size={15} strokeWidth={1.9} />
+            </IconButton>
+          </Tooltip>
+        </div>
+      )}
 
       <nav className="flex flex-col gap-0.5">
         {nav.map((item) => (

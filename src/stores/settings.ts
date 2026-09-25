@@ -1,7 +1,96 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, type PersistStorage } from 'zustand/middleware';
 import type { Appearance, Density } from '@/types';
 import { getHost } from '@/services/host';
+import { clearCookie, readCookie, writeCookie } from '@/utils/cookies';
+
+/**
+ * Preferences, remembered twice.
+ *
+ * `localStorage` is the primary copy — it is synchronous, which is what lets
+ * index.html paint in the right theme before React loads. A cookie is written
+ * alongside it on every change and read only when `localStorage` has nothing,
+ * which is what makes the application remember you after a browser evicts site
+ * data, on a fresh private session, or between two machines on the same
+ * profile. It is a fallback, never a second authority: whichever store already
+ * has an entry for this user wins, so the two cannot fight.
+ */
+/**
+ * The fields that are persisted.
+ *
+ * Declared as a named function rather than an inline literal for one reason:
+ * it gives the storage layer the *exact* type to read and write. The setters
+ * and derived fields are deliberately not here — a preference is a value, not
+ * an action, and replaying an action from disk would be nonsense.
+ */
+function persistable(state: SettingsState) {
+  return {
+    appearance: state.appearance,
+    density: state.density,
+    reduceTransparency: state.reduceTransparency,
+    showThumbnailMeta: state.showThumbnailMeta,
+    thumbnailSize: state.thumbnailSize,
+    localProcessing: state.localProcessing,
+    autoIndex: state.autoIndex,
+    indexOnBattery: state.indexOnBattery,
+    notifications: state.notifications,
+    semanticSearch: state.semanticSearch,
+    llmEnabled: state.llmEnabled,
+    llmModel: state.llmModel,
+    servicePort: state.servicePort,
+    userName: state.userName,
+    accountLabel: state.accountLabel,
+    useCases: state.useCases,
+    onboarded: state.onboarded,
+    lastBackupAt: state.lastBackupAt,
+  };
+}
+
+type PersistedSettings = ReturnType<typeof persistable>;
+
+const cookieBackedStorage: PersistStorage<PersistedSettings> = {
+  getItem(name) {
+    let raw: string | null = null;
+    try {
+      raw = globalThis.localStorage?.getItem(name) ?? null;
+    } catch {
+      // Storage can be denied outright (policy, private mode). The cookie is
+      // why there is still a preference to restore.
+      raw = null;
+    }
+    raw = raw ?? readCookie(name);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as { state?: PersistedSettings; version?: number };
+      if (parsed && typeof parsed === 'object' && parsed.state && 'state' in parsed) {
+        return { state: parsed.state, version: parsed.version ?? 1 };
+      }
+      // A bare object is an older shape; treat it as the state itself.
+      const bare = parsed as PersistedSettings | null;
+      if (!bare || typeof bare !== 'object') return null;
+      return { state: bare, version: 1 };
+    } catch {
+      return null;
+    }
+  },
+  setItem(name, value) {
+    const raw = typeof value === 'string' ? value : JSON.stringify(value);
+    try {
+      globalThis.localStorage?.setItem(name, raw);
+    } catch {
+      // Quota or a denied origin. The cookie below still holds the value.
+    }
+    writeCookie(name, raw);
+  },
+  removeItem(name) {
+    try {
+      globalThis.localStorage?.removeItem(name);
+    } catch {
+      /* nothing to remove from a store we cannot reach */
+    }
+    clearCookie(name);
+  },
+};
 
 /**
  * User preferences. Persisted locally, never synced anywhere.
@@ -165,26 +254,8 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'afterimage.settings.v1',
       version: 1,
-      partialize: (state) => ({
-        appearance: state.appearance,
-        density: state.density,
-        reduceTransparency: state.reduceTransparency,
-        showThumbnailMeta: state.showThumbnailMeta,
-        thumbnailSize: state.thumbnailSize,
-        localProcessing: state.localProcessing,
-        autoIndex: state.autoIndex,
-        indexOnBattery: state.indexOnBattery,
-        notifications: state.notifications,
-        semanticSearch: state.semanticSearch,
-        llmEnabled: state.llmEnabled,
-        llmModel: state.llmModel,
-        servicePort: state.servicePort,
-        userName: state.userName,
-        accountLabel: state.accountLabel,
-        useCases: state.useCases,
-        onboarded: state.onboarded,
-        lastBackupAt: state.lastBackupAt,
-      }),
+      storage: cookieBackedStorage,
+      partialize: persistable,
     },
   ),
 );

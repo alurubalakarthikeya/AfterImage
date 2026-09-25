@@ -123,7 +123,7 @@ export function PillTabs({
   size?: 'sm' | 'md';
 }) {
   return (
-    <div className={cn('flex items-center gap-1.5', className)} role="tablist">
+    <div className={cn('flex flex-wrap items-center gap-1.5', className)} role="tablist">
       {tabs.map((tab) => {
         const selected = tab.id === value;
         return (
