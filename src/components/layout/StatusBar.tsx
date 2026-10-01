@@ -2,7 +2,7 @@ import { useArchiveStore } from '@/stores/archive';
 import { usePeopleStore } from '@/stores/people';
 import { useUIStore } from '@/stores/ui';
 import { getHost } from '@/services/host';
-import { cn, formatCount, formatRelativeTime, formatStorage } from '@/utils/format';
+import { formatCount, formatRelativeTime, formatStorage } from '@/utils/format';
 import { Icon } from '@/components/common/Icon';
 
 /**
@@ -182,21 +182,25 @@ export function StatusBar() {
         </span>
       )}
 
-      {/* Right: the promise the product is built on, stated plainly. */}
-      <span
-        className={cn(
-          'flex shrink-0 items-center gap-1.5',
-          native ? 'text-ink-3' : 'text-caution',
-        )}
-        title={
-          native
-            ? 'Everything is indexed on this machine. Nothing is uploaded.'
-            : 'Running without the desktop layer — nothing can be read or written.'
-        }
-      >
-        <Icon name={native ? 'Shield' : 'Info'} size={11} strokeWidth={2.1} />
-        {native ? 'Local · offline' : 'Browser preview'}
-      </span>
+      {/*
+        Right: the promise the product is built on, stated plainly — and only
+        where there is a promise to state.
+
+        The desktop build indexes on this machine and can say so. The browser
+        build has no such layer to make the claim about, and a badge announcing
+        that the build is a preview told the user about how the application was
+        delivered rather than about their archive. The bar reports what the
+        pipeline is doing; it does not narrate its own packaging.
+      */}
+      {native && (
+        <span
+          className="flex shrink-0 items-center gap-1.5 text-ink-3"
+          title="Everything is indexed on this machine. Nothing is uploaded."
+        >
+          <Icon name="Shield" size={11} strokeWidth={2.1} />
+          Local · offline
+        </span>
+      )}
     </footer>
   );
 }

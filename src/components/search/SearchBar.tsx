@@ -277,4 +277,5 @@ export const MATCH_LABEL: Record<string, string> = {
   project: 'Project',
   collection: 'Collection',
   semantic: 'Similar meaning',
+  described: 'Looks like that',
 };

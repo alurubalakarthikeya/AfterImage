@@ -20,6 +20,8 @@ const MATCH_COPY: Record<SearchHit['match'], { label: string; icon: string }> = 
   collection: { label: 'Collection', icon: 'Layers' },
   // "Similar meaning" is described, not branded: no sparkle, no "AI match".
   semantic: { label: 'Similar meaning', icon: 'Search' },
+  // Found from what the file *is* rather than from what it is called.
+  described: { label: 'Looks like that', icon: 'Eye' },
 };
 
 function HighlightedText({ text, terms }: { text: string; terms: string[] }) {
@@ -106,7 +108,7 @@ export function SearchResults({ onOpen }: { onOpen?: (fileId: string) => void })
             : submitted
               ? semanticAvailable
                 ? 'Try a tag, a file type, or a looser phrase — full text and meaning are both searched.'
-                : 'Try a tag, a file type, or a looser phrase. Install the local embedding model in settings to search by meaning as well.'
+                : 'Try fewer words, a tag or a file type — or describe the picture instead: “dark wide screenshot”, “tall blurry photo”.'
               : 'Search filenames, extracted text, tags, folders, collections and projects — all on this machine.'
         }
       />

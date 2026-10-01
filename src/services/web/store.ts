@@ -7,6 +7,7 @@ import type {
   Project,
   Tag,
 } from '@/types';
+import type { MeasuredSignature } from '../search/query';
 
 /**
  * The browser's archive: IndexedDB, held open across sessions.
@@ -44,6 +45,17 @@ export interface StoredFile {
   file: ArchiveFile;
   /** How the original is read back for a preview, a version or bigger pixels. */
   handle?: FileSystemFileHandle;
+  /**
+   * What was measured about a picture's own pixels while it was indexed.
+   *
+   * Kept beside the record rather than on it: the desktop build keeps this in its
+   * Image DNA, this build has no such table, and answering "dark and wide" has
+   * to be possible without decoding a single photograph a second time. Absent
+   * for anything that is not a picture, and for records indexed before this was
+   * measured — a described search then uses the rest of what it knows, and says
+   * nothing about what it does not.
+   */
+  signature?: MeasuredSignature;
 }
 
 /** The pictures themselves, kept out of the records so a query never loads one. */

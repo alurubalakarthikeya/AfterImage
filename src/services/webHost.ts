@@ -35,6 +35,14 @@ import type {
   HostPreferences,
 } from './host';
 import {
+  buildCriteria,
+  describedReasons,
+  scoreFile,
+  summarise,
+  type MeasuredSignature,
+  type QueryContext,
+} from './search/query';
+import {
   available as storageAvailable,
   clearAll,
   footprint,
@@ -473,6 +481,9 @@ export function createWebHost(): ArchiveHost {
       embeddingState: 'unavailable',
     };
 
+    // Carried over on a rescan so an untouched picture is not measured twice.
+    let signature: MeasuredSignature | undefined = existing?.signature;
+
     // What the browser can measure about a picture, from the picture itself.
     if (RENDERABLE.includes(kind) && IMAGE_EXTS.includes(ext)) {
       const unchanged =
@@ -486,6 +497,7 @@ export function createWebHost(): ArchiveHost {
           record.width = generated.width;
           record.height = generated.height;
           record.description = describe(generated.analysis);
+          signature = signatureOf(generated.analysis);
           blobs.set(id, { fileId: id, thumb: generated.thumb, preview: generated.preview });
           rememberUrl(thumbKey(id), generated.thumb);
           rememberUrl(previewKey(id), generated.preview);
@@ -509,7 +521,26 @@ export function createWebHost(): ArchiveHost {
       }
     }
 
-    return { record: { file: record, handle: entry.handle }, touched: true };
+    return { record: { file: record, handle: entry.handle, signature }, touched: true };
+  }
+
+  /**
+   * The measurements a described search reads, kept with the record.
+   *
+   * The palette is cut to the colours that actually cover something: four
+   * swatches answer "is it blue" as well as six do, and this is copied for every
+   * picture in the archive.
+   */
+  function signatureOf(analysis: Analysis | null): MeasuredSignature | undefined {
+    if (!analysis) return undefined;
+    return {
+      brightness: analysis.brightness,
+      contrast: analysis.contrast,
+      sharpness: analysis.sharpness,
+      saturation: analysis.saturation,
+      temperatureShift: analysis.temperatureShift,
+      palette: analysis.palette.slice(0, 4),
+    };
   }
 
   /** The one-line description Image DNA shows, measured rather than guessed. */
@@ -733,187 +764,68 @@ export function createWebHost(): ArchiveHost {
   // Retrieval
   // -------------------------------------------------------------------------
 
-  const TOKEN_SPLIT = /[^a-z0-9]+/;
-
-  function normalise(value: string): string[] {
-    return value
-      .toLowerCase()
-      .split(TOKEN_SPLIT)
-      .filter((token) => token.length > 0);
-  }
-
-  interface ParsedQuery {
-    phrases: string[][];
-    terms: string[];
-    kinds: FileKind[];
-    tagNames: string[];
-    sinceDays: number | null;
-    favoritesOnly: boolean;
-  }
-
   /**
-   * The query language, parsed here rather than in Rust.
+   * The names behind the ids, and the measurements behind the pictures.
    *
-   * Same surface as the desktop build — `kind:`, `tag:`, `favorite`, `since:7d`,
-   * quoted phrases — because a syntax that worked in one build and not the other
-   * would be a trap rather than a feature.
+   * The query language itself lives in `services/search/query.ts`, shared with
+   * nothing else but written to be shared: the desktop build answers the same
+   * questions in Rust, and a second copy of the language here would be a second
+   * definition of what `kind:` means. What this host contributes is the two
+   * things only it knows — the names behind tag, collection and project ids, and
+   * the pixel measurements it took while it made each thumbnail.
    */
-  function parse(raw: string): ParsedQuery {
-    const parsed: ParsedQuery = {
-      phrases: [],
-      terms: [],
-      kinds: [],
-      tagNames: [],
-      sinceDays: null,
-      favoritesOnly: false,
+  function queryContext(now: number): QueryContext {
+    return {
+      tagName: (id) => tags.get(id)?.name ?? '',
+      collectionName: (id) => collections.get(id)?.name ?? '',
+      projectName: (id) => projects.get(id)?.name ?? '',
+      signature: (fileId) => files.get(fileId)?.signature,
+      now,
     };
-
-    const matches = raw.match(/"[^"]*"|\S+/g) ?? [];
-    for (const piece of matches) {
-      if (piece.startsWith('"') && piece.endsWith('"') && piece.length > 2) {
-        const inner = normalise(piece.slice(1, -1));
-        if (inner.length > 0) parsed.phrases.push(inner);
-        continue;
-      }
-
-      const [prefix, value] = piece.includes(':') ? piece.split(/:(.+)/) : ['', piece];
-      const lower = prefix.toLowerCase();
-      if (value && lower === 'kind') {
-        const kind = value.toLowerCase() as FileKind;
-        if (kind in EMPTY_BY_KIND) parsed.kinds.push(kind);
-        continue;
-      }
-      if (value && lower === 'tag') {
-        parsed.tagNames.push(value.toLowerCase());
-        continue;
-      }
-      if (value && (lower === 'since' || lower === 'after')) {
-        const days = Number.parseInt(value.replace(/\D+$/, ''), 10);
-        if (Number.isFinite(days) && days > 0) parsed.sinceDays = days;
-        continue;
-      }
-      if (lower === 'person' || lower === 'face') continue; // no faces in a browser
-      if (piece.toLowerCase() === 'favorite' || piece.toLowerCase() === 'favourite') {
-        parsed.favoritesOnly = true;
-        continue;
-      }
-
-      parsed.terms.push(...normalise(piece));
-    }
-
-    return parsed;
-  }
-
-  function scoreOf(file: ArchiveFile, parsed: ParsedQuery): { score: number; match: SearchHit['match'] } | null {
-    const haystacks: { text: string; weight: number; match: SearchHit['match'] }[] = [
-      { text: file.name, weight: 6, match: 'filename' },
-      { text: file.generatedTitle ?? '', weight: 4, match: 'filename' },
-      { text: file.description ?? '', weight: 3, match: 'text' },
-      { text: file.folderPath, weight: 2.5, match: 'folder' },
-      { text: file.labels.join(' '), weight: 2, match: 'text' },
-      { text: file.ext, weight: 1, match: 'filename' },
-      {
-        text: file.tagIds
-          .map((id) => tags.get(id)?.name ?? '')
-          .join(' '),
-        weight: 3,
-        match: 'tag',
-      },
-      {
-        text: file.collectionIds
-          .map((id) => collections.get(id)?.name ?? '')
-          .join(' '),
-        weight: 2,
-        match: 'collection',
-      },
-    ];
-
-    // A quoted phrase has to be in one field, in order — the whole point of
-    // quoting it. Anything else is per-word.
-    for (const phrase of parsed.phrases) {
-      const joined = phrase.join(' ');
-      const found = haystacks.some((entry) => normalise(entry.text).join(' ').includes(joined));
-      if (!found) return null;
-    }
-
-    if (parsed.terms.length === 0) {
-      // Filters on their own are a legitimate search.
-      const best = haystacks.find((entry) => entry.text.length > 0);
-      return { score: 1, match: best?.match ?? 'filename' };
-    }
-
-    let total = 0;
-    let bestMatch: SearchHit['match'] = 'filename';
-    let hitAny = false;
-
-    for (const term of parsed.terms) {
-      let termScore = 0;
-      for (const entry of haystacks) {
-        if (!entry.text) continue;
-        const tokens = normalise(entry.text);
-        const exact = tokens.includes(term);
-        // Prefixes, so a search works while it is still being typed.
-        const prefix = !exact && tokens.some((token) => token.startsWith(term));
-        if (exact) termScore = Math.max(termScore, entry.weight * 2);
-        else if (prefix) termScore = Math.max(termScore, entry.weight);
-        else if (term.length >= 3 && normalise(entry.text).join(' ').includes(term)) {
-          termScore = Math.max(termScore, entry.weight * 0.4);
-        }
-        if (termScore > 0) bestMatch = entry.match;
-      }
-      if (termScore === 0) continue;
-      hitAny = true;
-      total += termScore;
-    }
-
-    if (!hitAny) return null;
-
-    // Newer is better when the text says nothing to choose between two files.
-    const age = Date.now() - Date.parse(file.createdAt || file.modifiedAt);
-    const recency = Number.isFinite(age) ? Math.max(0, 0.6 - age / (1000 * 60 * 60 * 24 * 365 * 4)) : 0;
-    return { score: total + recency, match: bestMatch };
   }
 
   async function search(query: SearchQuery): Promise<SearchResponse> {
     await load();
-    const parsed = parse(query.raw ?? '');
-    const kinds = query.kind ? [query.kind] : parsed.kinds;
-    const tagIds = new Set(query.tagIds ?? []);
-    const since = query.sinceDays ?? parsed.sinceDays;
-    const cutoff = since ? Date.now() - since * 86_400_000 : null;
+    const now = Date.now();
+    const criteria = buildCriteria(query.raw ?? '', query, now);
+    const context = queryContext(now);
 
-    const hits: SearchHit[] = [];
+    const results: { file: ArchiveFile; score: number; match: SearchHit['match']; reasons: string[] }[] =
+      [];
     for (const file of allFiles()) {
-      if (kinds.length > 0 && !kinds.includes(file.kind)) continue;
-      if (query.collectionId && !file.collectionIds.includes(query.collectionId)) continue;
-      if (query.projectId && file.projectId !== query.projectId) continue;
-      if (query.folderId && file.folderId !== query.folderId) continue;
-      if (query.favoritesOnly || parsed.favoritesOnly) {
-        if (!file.favorite) continue;
-      }
-      if (tagIds.size > 0 && !file.tagIds.some((id) => tagIds.has(id))) continue;
-      if (parsed.tagNames.length > 0) {
-        const names = file.tagIds.map((id) => (tags.get(id)?.name ?? '').toLowerCase());
-        if (!parsed.tagNames.every((wanted) => names.some((name) => name.startsWith(wanted)))) continue;
-      }
-      if (cutoff && Date.parse(file.createdAt) < cutoff) continue;
-
-      const scored = scoreOf(file, parsed);
+      const scored = scoreFile(file, criteria, context);
       if (!scored) continue;
-      hits.push({ file, score: scored.score, match: scored.match, semantic: false });
+      results.push({ file, score: scored.score, match: scored.match, reasons: scored.reasons });
     }
 
-    hits.sort((a, b) => b.score - a.score || b.file.createdAt.localeCompare(a.file.createdAt));
+    results.sort((a, b) => b.score - a.score || b.file.createdAt.localeCompare(a.file.createdAt));
+
+    const hits: SearchHit[] = results.map(({ file, score, match }) => ({
+      file,
+      score,
+      match,
+      semantic: false,
+    }));
+
+    // The header says what was understood *and* what the description matched on,
+    // because a result found by "dark and wide" has to be able to show its
+    // working — otherwise it is indistinguishable from a guess.
+    const understood = summarise(criteria, results.length);
+    const described = describedReasons(results);
+    const kinds = [...new Set(criteria.groups.flatMap((group) => group.kinds))];
 
     const interpretation: QueryInterpretation = {
-      terms: parsed.terms,
+      terms: criteria.all,
       kinds,
-      tags: parsed.tagNames,
-      summary: summarise(parsed, hits.length),
+      tags: criteria.groups.flatMap((group) => group.tagNames),
+      summary:
+        described.length > 0
+          ? `${understood} · described as ${described.join(', ')}`
+          : understood,
       refinedByModel: false,
     };
-    if (since) interpretation.sinceDays = since;
-    if (parsed.favoritesOnly) interpretation.favoritesOnly = true;
+    if (criteria.filters.sinceDays) interpretation.sinceDays = criteria.filters.sinceDays;
+    if (criteria.filters.favoritesOnly) interpretation.favoritesOnly = true;
 
     return {
       hits: hits.slice(0, 200),
@@ -922,18 +834,6 @@ export function createWebHost(): ArchiveHost {
       semanticAvailable: false,
       error: null,
     };
-  }
-
-  function summarise(parsed: ParsedQuery, found: number): string {
-    const parts: string[] = [];
-    if (parsed.terms.length > 0) parts.push(parsed.terms.join(' '));
-    if (parsed.phrases.length > 0) parts.push(parsed.phrases.map((phrase) => `"${phrase.join(' ')}"`).join(' '));
-    if (parsed.kinds.length > 0) parts.push(`kind: ${parsed.kinds.join(', ')}`);
-    if (parsed.tagNames.length > 0) parts.push(`tagged ${parsed.tagNames.join(', ')}`);
-    if (parsed.sinceDays) parts.push(`in the last ${parsed.sinceDays} days`);
-    if (parsed.favoritesOnly) parts.push('favourites only');
-    if (parts.length === 0) return `${found} files in this browser's archive`;
-    return `${found} for ${parts.join(' · ')}`;
   }
 
   // -------------------------------------------------------------------------

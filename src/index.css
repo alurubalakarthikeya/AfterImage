@@ -340,6 +340,22 @@
     text-rendering: optimizeLegibility;
     overflow: hidden;
     overscroll-behavior: none;
+    /*
+     * The insets a notched phone takes out of the window.
+     *
+     * `viewport-fit=cover` in index.html is what asks the platform to hand
+     * these over; this is what gives them back to the layout, so the title bar
+     * clears the camera and the status line clears the home indicator.
+     * `border-box` is the other half of it: without it the padding would be
+     * added below a window that is already 100% tall, and the bottom of every
+     * page would be a screenful off.
+     *
+     * Every inset is zero where there is no cutout — which is every desktop, and
+     * the reason this changes nothing on those screens.
+     */
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   }
 
   h1,

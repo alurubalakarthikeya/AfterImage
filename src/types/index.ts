@@ -401,8 +401,23 @@ export interface QueryInterpretation {
 export interface SearchHit {
   file: ArchiveFile;
   score: number;
-  /** Which index produced the hit — surfaced subtly in the results list. */
-  match: 'filename' | 'text' | 'tag' | 'folder' | 'project' | 'collection' | 'semantic';
+  /**
+   * Which index produced the hit — surfaced subtly in the results list.
+   *
+   * `described` is the one that is not an index at all: the file was found
+   * because what was asked about it — its shape, tone, colour, detail — is what
+   * the archive measured from the file itself. It is named separately because a
+   * result nobody can explain is a result nobody will trust.
+   */
+  match:
+    | 'filename'
+    | 'text'
+    | 'tag'
+    | 'folder'
+    | 'project'
+    | 'collection'
+    | 'semantic'
+    | 'described';
   snippet?: string;
   /** True when only the vector index found it. */
   semantic: boolean;

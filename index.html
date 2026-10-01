@@ -2,7 +2,14 @@
 <html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      `viewport-fit=cover` is what lets the window paint to the edges of a
+      notched phone instead of being letterboxed by the browser. The insets it
+      exposes are respected in `index.css` (on `body`), so the interface is laid
+      out inside the cutout rather than under it. On a screen without a cutout
+      every inset is zero and nothing moves.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <title>AfterImage</title>
     <!--
@@ -14,8 +21,33 @@
     -->
     <link rel="icon" type="image/png" href="./favicon-32.png" sizes="32x32" />
     <link rel="icon" type="image/png" href="./favicon-48.png" sizes="48x48" />
-    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <!-- 180 x 180, fully painted: iOS masks its own squircle, and an icon with
+         transparency in it is a mark on whatever black iOS puts behind it. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
     <meta name="application-name" content="AfterImage" />
+
+    <!--
+      Installability.
+
+      The manifest is what turns this page into an application with its own
+      icon and its own window; `src/services/pwa.ts` decides whether it can be
+      installed and offers it. The two `theme-color` tags are one value per
+      colour scheme, so the operating system's status bar is white on a light
+      machine and black on a dark one without a line of JavaScript — the
+      alternative is a white bar above a black window, for half the users.
+
+      The `apple-` tags are the same three facts for iOS, which reads its own
+      vocabulary: standalone launch, a title under the icon, and a normal
+      status bar (never `black-translucent`, which paints white glyphs over a
+      window that is white in the light theme).
+    -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="AfterImage" />
 
     <!--
       The theme has to be right before the first paint, and the bundle that owns

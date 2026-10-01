@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { QUERY_HELP } from '@/services/search/query';
 import { useArchiveStore } from '@/stores/archive';
 import { useSearchStore } from '@/stores/search';
 import { useUIStore } from '@/stores/ui';
@@ -10,12 +12,48 @@ import { SearchFilters } from '@/components/search/SearchFilters';
 import { SearchResults } from '@/components/search/SearchResults';
 
 const EXAMPLES = [
-  'errors last week',
   'kind:screenshot #react',
-  'invoice this month',
-  'is:fav design',
-  'receipt 280.00',
+  'kind:video size:>100mb',
+  'invoice after:2024-01-01',
+  'is:favorite design',
+  'tall dark blurry',
+  'wide colourful photo',
 ];
+
+/**
+ * What the search box accepts.
+ *
+ * The list comes from the parser itself (`QUERY_HELP`), so this panel cannot
+ * describe a syntax the code does not implement — which is the only kind of
+ * help text worth having in a product where the parser is testable and the
+ * prose is not.
+ */
+function SyntaxHelp({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="inline-flex w-fit items-center gap-1.5 text-2xs font-medium text-ink-2 transition-colors duration-150 hover:text-ink"
+      >
+        <Icon name={open ? 'ChevronDown' : 'ChevronRight'} size={12} strokeWidth={2.2} />
+        What you can type
+      </button>
+
+      {open && (
+        <div className="flex flex-col gap-1.5 rounded-card border border-line bg-surface-2 p-3">
+          {QUERY_HELP.map((entry) => (
+            <div key={entry.syntax} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+              <span className="shrink-0 font-mono text-2xs text-ink">{entry.syntax}</span>
+              <span className="min-w-0 flex-1 text-2xs leading-relaxed text-ink-2">{entry.what}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Search.
@@ -40,13 +78,14 @@ export function SearchPage() {
   const openFile = useArchiveStore((state) => state.openFile);
   const folders = useArchiveStore((state) => state.folders);
   const pushNotice = useUIStore((state) => state.pushNotice);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   if (!submitted) {
     return (
       <Page>
         <PageHeader
           title="Search"
-          subtitle="Filename, extracted text, tags, folders, collections and projects — all local"
+          subtitle="Names, text, tags, folders and projects — and, for a picture, what its pixels look like"
         />
         <div
           className="rounded-card border border-line bg-surface p-5"
@@ -61,7 +100,7 @@ export function SearchPage() {
               <p className="mt-0.5 text-meta leading-relaxed text-ink-2">
                 {folders.length === 0
                   ? 'Nothing is indexed yet. Add a folder and everything inside it becomes searchable as it is read.'
-                  : 'Press Ctrl K anywhere, or use the field in the toolbar. Filters can be typed: kind:, #tag, is:fav, since:7.'}
+                  : 'Press Ctrl K anywhere, or use the field in the toolbar. Names, text and structure are searched; a picture can also be described — try “dark wide screenshot”.'}
               </p>
             </div>
           </div>
@@ -86,6 +125,7 @@ export function SearchPage() {
                   </button>
                 ))}
               </div>
+              <SyntaxHelp open={helpOpen} onToggle={() => setHelpOpen((open) => !open)} />
             </div>
           )}
 
@@ -114,6 +154,7 @@ export function SearchPage() {
 
   const fromText = hits.filter((hit) => hit.match === 'text').length;
   const semanticHits = hits.filter((hit) => hit.semantic).length;
+  const describedHits = hits.filter((hit) => hit.match === 'described').length;
 
   return (
     <Page container>
@@ -145,8 +186,8 @@ export function SearchPage() {
             <Icon name="Info" size={12} className="mt-px shrink-0" />
             <span>
               {semanticAvailable
-                ? 'Results include similarity matches from the local embedding model, alongside exact matches on names, text, tags and folders.'
-                : 'Ranking uses the local full-text index over filenames, extracted text, tags and folders. Turning on the local embedding model in settings adds similarity matches.'}
+                ? 'Ranking combines exact matches on names, text, tags and folders with similarity matches from the local embedding model.'
+                : 'Ranking reads names, extracted text, tags, folders, collections and projects — and, for a picture, the shape, tone, colour and detail measured from its own pixels, so a description finds a file whose name says nothing.'}
             </span>
           </div>
         </aside>
@@ -158,6 +199,7 @@ export function SearchPage() {
                 {formatCount(total)} matches, ranked by relevance then recency
               </span>
               {fromText > 0 && <span>{fromText} from extracted text</span>}
+              {describedHits > 0 && <span>{describedHits} found from their description</span>}
               {semanticHits > 0 && <span>{semanticHits} from similar meaning</span>}
             </div>
           )}

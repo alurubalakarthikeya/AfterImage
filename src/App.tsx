@@ -3,11 +3,13 @@ import { dismissSplash, report } from '@/boot';
 import { useAppearance } from '@/hooks/useAppearance';
 import { useDropImport } from '@/hooks/useDropImport';
 import { useHostBridge } from '@/hooks/useHostBridge';
+import { useInstalledHistory } from '@/hooks/useInstalledHistory';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useLocalIdentity } from '@/hooks/useLocalIdentity';
 import { getHost, isTauri } from '@/services/host';
 import { useArchiveStore } from '@/stores/archive';
 import { useSettingsStore } from '@/stores/settings';
+import { watchInstallability } from '@/stores/pwa';
 import { Onboarding } from '@/components/onboarding/Onboarding';
 import { AppShell } from '@/components/layout/AppShell';
 import { TitleBar } from '@/components/layout/TitleBar';
@@ -119,6 +121,13 @@ export default function App() {
   useDropImport();
   useKeyboardShortcuts();
   useLocalIdentity();
+  useInstalledHistory();
+
+  // Whether this device can install the app, and whether it already has. The
+  // platform answers asynchronously — Chromium raises its install prompt on a
+  // schedule of its own — so the answer lives in a store that Settings reads
+  // rather than in a hook that only one component gets to use.
+  useEffect(() => watchInstallability(), []);
 
   const status = useArchiveStore((state) => state.status);
   const error = useArchiveStore((state) => state.error);

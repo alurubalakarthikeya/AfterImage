@@ -10,6 +10,8 @@ import { USE_CASES } from '@/utils/useCases';
 import { Page } from '@/components/common/Page';
 import { Row, Section } from '@/components/common/Section';
 import { Organizer } from '@/components/settings/Organizer';
+import { DownloadApp } from '@/components/settings/DownloadApp';
+import { InstallApp } from '@/components/settings/InstallApp';
 import { PageHeader } from '@/components/common/PageHeader';
 import { Button } from '@/components/common/Button';
 import { Icon } from '@/components/common/Icon';
@@ -155,12 +157,16 @@ export function Settings() {
         title="Settings"
         subtitle="Preferences for this machine. Nothing here syncs anywhere."
       >
+        {/* What this runtime can actually do, which is the only thing worth
+            saying here: the desktop build has the machine, a browser with the
+            File System Access API keeps the archive in this browser, and a
+            browser without it cannot open a folder at all. */}
         <Badge tone="accent" icon={isTauri() ? 'Shield' : 'Info'}>
           {host.name === 'tauri'
             ? 'Desktop build'
             : host.name === 'web'
               ? 'Web build · stored in this browser'
-              : 'Browser preview'}
+              : 'This browser cannot open folders'}
         </Badge>
       </PageHeader>
 
@@ -303,6 +309,13 @@ export function Settings() {
           />
         </Row>
       </Section>
+
+      {/* Both render nothing inside the desktop build, which is already
+          installed. The downloads come first: a visitor deciding between the
+          page and the program is asking a more consequential question than
+          whether to pin the page to a home screen. */}
+      <DownloadApp />
+      <InstallApp />
 
       <Section
         icon="Folder"

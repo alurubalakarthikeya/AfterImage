@@ -4,6 +4,10 @@
   "version": "0.1.2",
   "type": "module",
   "description": "AfterImage — a local-first desktop application for your personal digital archive.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alurubalakarthikeya/AfterImage.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -12,7 +16,10 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "check:search": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/check-search.mjs",
+    "release": "node scripts/release.mjs",
     "icons": "node scripts/generate-icons.mjs",
+    "icons:web": "node scripts/generate-web-icons.mjs",
     "service:venv": "node scripts/service.mjs venv",
     "service:install": "node scripts/service.mjs install",
     "service:install:full": "node scripts/service.mjs install --full",

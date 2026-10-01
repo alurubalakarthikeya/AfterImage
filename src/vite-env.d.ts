@@ -9,6 +9,8 @@
  */
 declare const __BUILD_VERSION__: string;
 declare const __BUILD_TIME__: string;
+/** `owner/name` of the repository the installers are published to, or ''. */
+declare const __RELEASE_REPO__: string;
 
 /**
  * The parts of the File System Access API this project uses that TypeScript's

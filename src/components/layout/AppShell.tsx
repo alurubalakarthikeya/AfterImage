@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { RouteId } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -27,6 +28,28 @@ import { DropOverlay } from './DropOverlay';
 const SIDEBAR_WIDE = 224;
 const SIDEBAR_NARROW = 68;
 const INSPECTOR_WIDTH = 320;
+
+/**
+ * What the window is called while each section is on screen.
+ *
+ * The sections are named here rather than read off the nav because this is the
+ * one place they are a window title, not a control: a person's page reports its
+ * section, and Home is the application's own name rather than a destination.
+ */
+const SECTION_LABELS: Record<RouteId, string> = {
+  home: 'Home',
+  all: 'All Files',
+  photos: 'Photos',
+  screenshots: 'Screenshots',
+  documents: 'Documents',
+  videos: 'Videos',
+  people: 'People',
+  person: 'People',
+  projects: 'Projects',
+  collections: 'Collections',
+  search: 'Search',
+  settings: 'Settings',
+};
 
 function RouteView({ route }: { route: RouteId }) {
   switch (route) {
@@ -69,10 +92,12 @@ function RouteView({ route }: { route: RouteId }) {
  * inspector steps out of the way rather than crushing the workspace.
  *
  * Below 768px — a phone — the grid is one column: the sidebar leaves the
- * layout entirely and reappears as the pill dock at the bottom of the window
+ * layout entirely and reappears as the tab bar at the bottom of the window
  * (`MobileDock`), which buys the workspace everything the rail used to hold and
  * puts the navigation where a thumb already is. The desktop layout above that
- * line is the same pixels it has always been.
+ * line is the same pixels it has always been, down to the column widths: it
+ * keeps the rail, the inspector and the window's own status line, so widening a
+ * window returns a desktop application rather than a stretched phone.
  */
 export function AppShell() {
   const route = useUIStore((state) => state.route);
@@ -83,6 +108,14 @@ export function AppShell() {
   const roomForSidebar = useMediaQuery('(min-width: 768px)');
   const folders = useArchiveStore((state) => state.folders);
   const status = useArchiveStore((state) => state.status);
+
+  // The window's own title, kept level with the section on screen — the way
+  // every desktop application names what the user is looking at. It is the one
+  // piece of chrome a frameless window cannot draw for itself: the tab strip
+  // and the task switcher read it, and neither of them can see the sidebar.
+  useEffect(() => {
+    document.title = route === 'home' ? 'AfterImage' : `AfterImage — ${SECTION_LABELS[route]}`;
+  }, [route]);
 
   /**
    * Nothing has been granted access yet, so there is no archive to browse. The
@@ -119,14 +152,16 @@ export function AppShell() {
 
       {/* The window's own inset: 12px against every edge, including under the
           title bar, so the frame reads as a frame and the content as content.
-          On a phone the inset answers for two more things: a little more air
-          under the top bar, and the dock + status bar the bottom edge now
-          carries — without it the last row of every page would sit under the
-          navigation. The desktop values below 768px's line are untouched. */}
+          On a phone the top edge takes four more pixels of air under the title
+          bar, which is the one place the eye needs a beat between the search
+          field and the page. The bottom needs nothing extra any more: the tab
+          bar and the status line are bands of the window's own layout rather
+          than a floating pill over the content, so the grid simply ends above
+          them. The desktop values below 768px's line are untouched. */}
       <div
         className={cn(
           'grid min-h-0 flex-1 gap-3 px-3',
-          roomForSidebar ? 'pt-3 pb-3' : 'pt-4 pb-[72px]',
+          roomForSidebar ? 'pt-3 pb-3' : 'pt-4 pb-3',
         )}
         style={{ gridTemplateColumns: columns }}
       >
@@ -152,6 +187,10 @@ export function AppShell() {
       </div>
 
       <StatusBar />
+
+      {/* Order matters here and nowhere else in the shell: the tab bar is the
+          last row, so it is the one under the thumb, and the status line sits
+          above it as the thin band of facts it has always been. */}
       {!roomForSidebar && <MobileDock />}
       <DropOverlay />
     </div>

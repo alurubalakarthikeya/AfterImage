@@ -11,6 +11,22 @@ import { readFileSync } from 'node:fs';
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 const buildTime = new Date().toISOString();
 
+/**
+ * `owner/name` for the release downloads, taken from the manifest rather than
+ * typed into the interface.
+ *
+ * The web build offers the installers to whoever opens it, and those links have
+ * to survive a rename, a fork or a move to another host. Reading them from the
+ * one place they are already recorded means there is nothing to remember at
+ * deployment time and nothing that can drift.
+ */
+const releaseRepo = ((): string => {
+  const url = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url;
+  if (typeof url !== 'string') return '';
+  const match = url.match(/github\.com[/:]([^/]+\/[^/.]+)(?:\.git)?$/i);
+  return match ? match[1] : '';
+})();
+
 // AfterImage is a Tauri desktop app, but the renderer must also run in a plain
 // browser so the UI can be developed and reviewed without the Rust toolchain.
 export default defineConfig({
@@ -18,6 +34,7 @@ export default defineConfig({
   define: {
     __BUILD_VERSION__: JSON.stringify(pkg.version ?? '0.0.0'),
     __BUILD_TIME__: JSON.stringify(buildTime),
+    __RELEASE_REPO__: JSON.stringify(releaseRepo),
   },
   resolve: {
     alias: {
