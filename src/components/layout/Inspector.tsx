@@ -550,7 +550,7 @@ export function Inspector() {
     // `[&>*]:shrink-0` matters: without it the column's children are allowed to
     // compress, and a fixed-height card (the promo panel) collapses to a strip.
     <aside
-      className="glass flex min-h-0 flex-col gap-4 overflow-y-auto rounded-panel border border-line p-3 [&>*]:shrink-0"
+      className="glass flex min-h-0 flex-col gap-4 overflow-y-auto rounded-panel border border-line p-3.5 [&>*]:shrink-0"
       aria-label="Inspector"
     >
       {selected.length === 0 && <IdleInspector />}

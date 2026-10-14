@@ -48,6 +48,10 @@ pub struct Description {
     pub title: Option<String>,
     pub description: Option<String>,
     pub labels: Vec<String>,
+    /// Which engine wrote it — `ollama:llava:7b` for a vision model,
+    /// `blip+clip` for the captioner. Kept because it is the only honest way to
+    /// tell "the vision model described this" from "the captioner did".
+    pub engine: Option<String>,
 }
 
 /// A picture made from a file that is not one.
@@ -147,6 +151,12 @@ pub fn extract_text(port: u16, path: &str, kind: &str, file_id: &str) -> TextOut
 /// The service answers with an empty title when no vision model is installed.
 /// That is passed through untouched: the renderer falls back to filename, OCR
 /// text and metadata, and never displays a title nobody generated.
+///
+/// `vlm` is the description request itself: `Some` means the user asked for
+/// descriptions (with that model, empty for the service's own default) and
+/// `None` means do not look. It travels with the picture rather than being read
+/// from the service's environment, because the preference lives in the archive's
+/// database and the service has no business reading it.
 pub fn describe(
     port: u16,
     path: &str,
@@ -154,6 +164,7 @@ pub fn describe(
     file_id: &str,
     text: Option<&str>,
     still: Option<&str>,
+    vlm: Option<&str>,
 ) -> Option<Description> {
     let response = ureq::post(&format!("{}/index/describe", base(port)))
         .timeout(LONG)
@@ -166,6 +177,8 @@ pub fn describe(
             // pipeline already rendered a frame or a page, that is what the
             // model looks at, and the file gets real tags instead of none.
             "still": still,
+            "vlmEnabled": vlm.is_some(),
+            "vlmModel": vlm.unwrap_or(""),
         }))
         .ok()?;
     let value: serde_json::Value = response.into_json().ok()?;
@@ -192,6 +205,11 @@ pub fn describe(
                     .collect()
             })
             .unwrap_or_default(),
+        engine: value
+            .get("engine")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string),
     })
 }
 

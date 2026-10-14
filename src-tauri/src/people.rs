@@ -27,6 +27,7 @@
 use std::collections::HashMap;
 
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
 use crate::models::{FileFace, PeopleStats, Person};
@@ -557,6 +558,76 @@ mod tests {
     }
 
     #[test]
+    fn several_groups_can_be_folded_into_one_and_put_back() {
+        let conn = database();
+        store(&conn, "file-a", &[detected(0, 0.35, 90.0)]);
+        store(&conn, "file-b", &[detected(40, 0.35, 90.0)]);
+        store(&conn, "file-c", &[detected(80, 0.35, 90.0)]);
+        let people = list_people(&conn).unwrap();
+        assert_eq!(people.len(), 3);
+
+        let survivor = people[0].id.clone();
+        let doomed: Vec<String> = people[1..]
+            .iter()
+            .map(|person| person.id.clone())
+            .collect();
+        rename(&conn, &survivor, Some("Rahul")).unwrap();
+
+        assert!(can_undo_merge(&conn).unwrap() == false);
+        merge_many(&conn, &doomed, &survivor).unwrap();
+        assert!(can_undo_merge(&conn).unwrap());
+
+        let after = list_people(&conn).unwrap();
+        assert_eq!(after.len(), 1, "all three must land in one group");
+        assert_eq!(after[0].label.as_deref(), Some("Rahul"));
+        assert_eq!(after[0].file_count, 3);
+        assert_eq!(after[0].face_count, 3);
+
+        // The name is in the index for every file the person appears in — which
+        // is the point of merging rather than merely hiding.
+        let named: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM file_search WHERE people LIKE '%Rahul%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(named, 3);
+
+        assert!(undo_merge(&conn).unwrap());
+        let restored = list_people(&conn).unwrap();
+        assert_eq!(restored.len(), 3, "the merge must be taken back whole");
+        assert_eq!(
+            restored
+                .iter()
+                .find(|person| person.id == survivor)
+                .and_then(|person| person.label.as_deref()),
+            Some("Rahul"),
+            "the survivor keeps the name it had",
+        );
+        for person in &restored {
+            assert_eq!(person.file_count, 1, "each group gets its own photograph back");
+        }
+        // A second undo is a no-op rather than an error.
+        assert!(!undo_merge(&conn).unwrap());
+    }
+
+    #[test]
+    fn merging_into_itself_and_empty_merges_do_nothing() {
+        let conn = database();
+        store(&conn, "file-a", &[detected(0, 0.35, 90.0)]);
+        let people = list_people(&conn).unwrap();
+        let only = people[0].id.clone();
+
+        merge_many(&conn, &[only.clone()], &only).unwrap();
+        assert_eq!(list_people(&conn).unwrap().len(), 1);
+        assert!(
+            !can_undo_merge(&conn).unwrap(),
+            "a merge that moved nothing leaves nothing to undo"
+        );
+    }
+
+    #[test]
     fn hiding_a_group_removes_it_from_the_numbers_but_not_the_list() {
         let conn = database();
         store(&conn, "file-a", &[detected(0, 0.35, 90.0)]);
@@ -689,21 +760,228 @@ pub fn set_hidden(conn: &Connection, person_id: &str, hidden: bool) -> AppResult
 /// merge goes, and the centroid is recomputed from the surviving faces rather
 /// than averaged from two means of different sizes.
 pub fn merge(conn: &Connection, from_id: &str, into_id: &str) -> AppResult<()> {
-    if from_id == into_id {
+    merge_many(conn, &[from_id.to_string()], into_id)
+}
+
+// ---------------------------------------------------------------------------
+// Merging several groups at once, and taking it back
+// ---------------------------------------------------------------------------
+
+/// One group as it was before a merge absorbed it, in a shape that survives a
+/// round trip through JSON.
+///
+/// The centroid is stored decoded rather than as its blob: this record exists
+/// to be written by one version of the application and read by a later one, and
+/// a byte layout is exactly the kind of detail that changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AbsorbedGroup {
+    id: String,
+    label: Option<String>,
+    centroid: Vec<f32>,
+    face_count: i64,
+    hidden: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+/// Everything needed to put a merge back the way it was.
+///
+/// Kept to one record — the last merge — because undo is a correction for a
+/// misread thumbnail, which is always the thing that just happened. A history
+/// of merges would be a second interface to maintain for a question nobody
+/// asks ("which of my last seven merges was wrong?").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MergeRecord {
+    at: String,
+    into_id: String,
+    absorbed: Vec<AbsorbedGroup>,
+    /// `(face id, the person it belonged to)` for every face the merge moved.
+    faces: Vec<(String, String)>,
+}
+
+/// The settings key the one undo record is stored under.
+const MERGE_UNDO_KEY: &str = "people.merge.undo";
+
+fn load_merge_record(conn: &Connection) -> AppResult<Option<MergeRecord>> {
+    let Some(raw) = crate::db::get_setting(conn, MERGE_UNDO_KEY)? else {
+        return Ok(None);
+    };
+    // A record written by a future schema is treated as no record at all rather
+    // than as an error: undo is an extra, and refusing to merge because an old
+    // one could not be read would be the wrong trade.
+    Ok(serde_json::from_str(&raw).ok())
+}
+fn save_merge_record(conn: &Connection, record: &MergeRecord) -> AppResult<()> {
+    crate::db::set_setting(conn, MERGE_UNDO_KEY, &serde_json::to_string(record)?)?;
+    Ok(())
+}
+
+/// Fold several groups into one — "these three are all Rahul".
+///
+/// The survivor is `into_id` and keeps its own name; everything else is
+/// absorbed. The whole thing is one transaction, because a merge that applied
+/// two of its three moves would leave a person split across two identities with
+/// no way to tell which was the mistake.
+///
+/// Before anything moves, the affected rows are written aside as the undo
+/// record — so an undo restores the groups *and* the exact faces each one held,
+/// rather than re-clustering and hoping the threshold lands in the same place.
+pub fn merge_many(
+    conn: &Connection,
+    from_ids: &[String],
+    into_id: &str,
+) -> AppResult<()> {
+    let targets: Vec<String> = from_ids
+        .iter()
+        .filter(|id| id.as_str() != into_id)
+        .cloned()
+        .collect();
+    if targets.is_empty() {
         return Ok(());
     }
+
+    // ---- the record, read before the transaction ---------------------
+    let mut absorbed: Vec<AbsorbedGroup> = Vec::new();
+    {
+        let mut statement = conn.prepare(
+            "SELECT id, label, centroid, face_count, hidden, created_at, updated_at \
+             FROM people WHERE id = ?1",
+        )?;
+        for id in &targets {
+            let row = statement
+                .query_row(params![id], |row| {
+                    Ok(AbsorbedGroup {
+                        id: row.get(0)?,
+                        label: row.get(1)?,
+                        centroid: row
+                            .get::<_, Option<Vec<u8>>>(2)?
+                            .map(|blob| decode(&blob))
+                            .unwrap_or_default(),
+                        face_count: row.get(3)?,
+                        hidden: row.get::<_, i64>(4)? != 0,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                })
+                .optional()?;
+            if let Some(group) = row {
+                absorbed.push(group);
+            }
+        }
+    }
+
+    let mut moved: Vec<(String, String)> = Vec::new();
+    {
+        let mut statement = conn.prepare("SELECT id, person_id FROM faces WHERE person_id = ?1")?;
+        for group in &absorbed {
+            let rows = statement.query_map(params![group.id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                moved.push(row?);
+            }
+        }
+    }
+
+    let record = MergeRecord {
+        at: crate::db::now(),
+        into_id: into_id.to_string(),
+        absorbed,
+        faces: moved,
+    };
+
     let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "UPDATE faces SET person_id = ?2 WHERE person_id = ?1",
-        params![from_id, into_id],
-    )?;
-    tx.execute("DELETE FROM people WHERE id = ?1", params![from_id])?;
+    for id in &targets {
+        tx.execute(
+            "UPDATE faces SET person_id = ?2 WHERE person_id = ?1",
+            params![id, into_id],
+        )?;
+        tx.execute("DELETE FROM people WHERE id = ?1", params![id])?;
+    }
     rebuild_centroid(&tx, into_id)?;
+    // Written inside the same transaction as the merge itself: an undo record
+    // that existed without its merge, or the reverse, would be worse than
+    // having neither.
+    save_merge_record(&tx, &record)?;
     tx.commit()?;
+
     // After the transaction, not inside it: the index is a separate table and a
     // merge that half-reindexed would be worse than one that did not at all.
+    for id in &record.absorbed {
+        reindex_person_files(conn, &id.id)?;
+    }
     reindex_person_files(conn, into_id)?;
     Ok(())
+}
+
+/// Is there a merge to take back?
+pub fn can_undo_merge(conn: &Connection) -> AppResult<bool> {
+    Ok(load_merge_record(conn)?.is_some())
+}
+
+/// Put the last merge back, exactly.
+///
+/// The absorbed groups are re-inserted with their own names, centroids and
+/// counts, and every face the merge moved goes back to the group it came from.
+/// Centroids are restored rather than recomputed: the point of an undo is that
+/// the state is *the one that existed before*, not an approximation of it that
+/// a later regroup would then anchor to.
+///
+/// Faces that no longer exist are skipped silently — a photograph deleted
+/// between the merge and the undo took its face row with it, and refusing to
+/// restore the rest because of that would be worse than restoring what remains.
+pub fn undo_merge(conn: &Connection) -> AppResult<bool> {
+    let Some(record) = load_merge_record(conn)? else {
+        return Ok(false);
+    };
+
+    let tx = conn.unchecked_transaction()?;
+    for group in &record.absorbed {
+        tx.execute(
+            "INSERT OR REPLACE INTO people \
+             (id, label, centroid, face_count, hidden, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                group.id,
+                group.label,
+                encode(&unit(&group.centroid)),
+                group.face_count,
+                group.hidden as i64,
+                group.created_at,
+                group.updated_at,
+            ],
+        )?;
+    }
+    for (face_id, person_id) in &record.faces {
+        tx.execute(
+            "UPDATE faces SET person_id = ?2 WHERE id = ?1",
+            params![face_id, person_id],
+        )?;
+    }
+    // The survivor's own counts were rewritten by the merge; they are derived
+    // from the rows, so recomputing them here is what puts it back.
+    if tx
+        .query_row(
+            "SELECT COUNT(*) FROM people WHERE id = ?1",
+            params![record.into_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0
+    {
+        rebuild_centroid(&tx, &record.into_id)?;
+    }
+    for group in &record.absorbed {
+        rebuild_centroid(&tx, &group.id)?;
+    }
+    tx.execute("DELETE FROM settings WHERE key = ?1", params![MERGE_UNDO_KEY])?;
+    tx.commit()?;
+
+    for group in &record.absorbed {
+        reindex_person_files(conn, &group.id)?;
+    }
+    reindex_person_files(conn, &record.into_id)?;
+    Ok(true)
 }
 
 /// Recompute one group's centroid from the faces that are actually in it.

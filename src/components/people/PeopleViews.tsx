@@ -26,6 +26,18 @@ import { PersonCard } from './PersonCard';
 export interface PeopleViewProps {
   people: Person[];
   busy: boolean;
+  /**
+   * Selection mode: taps choose groups to merge instead of opening them.
+   *
+   * It is a mode rather than a permanent affordance because picking is not what
+   * the page is for — it is what you do once, when two groups turn out to be
+   * one person, and a checkbox on every card at all times would make the grid
+   * read as a form.
+   */
+  selecting?: boolean;
+  /** Ids chosen so far, in pick order. */
+  selected?: string[];
+  onToggle?: (personId: string) => void;
   onOpen: (personId: string) => void;
   onRename: (personId: string, label: string) => void;
   onForget: (person: Person) => void;
@@ -49,21 +61,54 @@ function FaceAvatar({ person, size = 40 }: { person: Person; size?: number }) {
 }
 
 /** One person on one line: the list view's unit, and the timeline's. */
-function PersonRow({ person, busy, onOpen, onForget }: Omit<PeopleViewProps, 'people' | 'onRename'> & { person: Person }) {
+function PersonRow({
+  person,
+  busy,
+  selecting,
+  selected = [],
+  onToggle,
+  onOpen,
+  onForget,
+}: Omit<PeopleViewProps, 'people' | 'onRename'> & { person: Person }) {
+  const picked = selected.includes(person.id);
+
   return (
-    <div className="group/row flex items-center gap-3 rounded-thumb border border-line bg-surface px-3 py-2 transition-colors duration-150 hover:border-line-strong hover:bg-surface-2">
-      <button
-        type="button"
-        onClick={() => onOpen(person.id)}
-        aria-label={`Open ${person.label ?? 'this unnamed person'}`}
-        className="shrink-0"
-      >
-        <FaceAvatar person={person} />
-      </button>
+    <div
+      className={cn(
+        'group/row flex items-center gap-3 rounded-thumb border bg-surface px-3 py-2 transition-colors duration-150',
+        picked ? 'border-accent bg-surface-2' : 'border-line hover:border-line-strong hover:bg-surface-2',
+      )}
+    >
+      {selecting ? (
+        <button
+          type="button"
+          aria-pressed={picked}
+          aria-label={`Select ${person.label ?? 'this unnamed group'}`}
+          onClick={() => onToggle?.(person.id)}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-surface-2"
+        >
+          {picked ? (
+            <Icon name="Check" size={16} strokeWidth={2.4} className="text-accent-ink" />
+          ) : (
+            <span className="block h-10 w-10 overflow-hidden rounded-full opacity-40">
+              <AssetImage path={person.coverPath} alt="" fallbackIcon="User" />
+            </span>
+          )}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onOpen(person.id)}
+          aria-label={`Open ${person.label ?? 'this unnamed person'}`}
+          className="shrink-0"
+        >
+          <FaceAvatar person={person} />
+        </button>
+      )}
 
       <button
         type="button"
-        onClick={() => onOpen(person.id)}
+        onClick={() => (selecting ? onToggle?.(person.id) : onOpen(person.id))}
         className="min-w-0 flex-1 text-left"
       >
         <span
@@ -87,39 +132,53 @@ function PersonRow({ person, busy, onOpen, onForget }: Omit<PeopleViewProps, 'pe
         {formatCount(person.faceCount)} {person.faceCount === 1 ? 'face' : 'faces'}
       </span>
 
-      <Tooltip label="Delete this group" side="left">
-        <IconButton
-          label={`Delete ${person.label ?? 'this group'}`}
-          size="sm"
-          variant="ghost"
-          disabled={busy}
-          onClick={() => onForget(person)}
-          className="shrink-0 opacity-0 transition-opacity duration-150 focus-visible:opacity-100 group-hover/row:opacity-100"
-        >
-          <Icon name="Trash2" size={14} strokeWidth={1.9} />
-        </IconButton>
-      </Tooltip>
+      {!selecting && (
+        <Tooltip label="Delete this group" side="left">
+          <IconButton
+            label={`Delete ${person.label ?? 'this group'}`}
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => onForget(person)}
+            className="shrink-0 opacity-0 transition-opacity duration-150 focus-visible:opacity-100 group-hover/row:opacity-100"
+          >
+            <Icon name="Trash2" size={14} strokeWidth={1.9} />
+          </IconButton>
+        </Tooltip>
+      )}
     </div>
   );
 }
 
-export function PeopleViews({ people, busy, onOpen, onRename, onForget }: PeopleViewProps) {
+export function PeopleViews({
+  people,
+  busy,
+  selecting = false,
+  selected = [],
+  onToggle,
+  onOpen,
+  onRename,
+  onForget,
+}: PeopleViewProps) {
   const viewMode = useUIStore((state) => state.viewMode);
 
+  // Picking is about arrangement, not chronology: whatever view is on screen,
+  // selection turns it into one list of things to choose from.
+  const row = (person: Person) => (
+    <PersonRow
+      key={person.id}
+      person={person}
+      busy={busy}
+      selecting={selecting}
+      selected={selected}
+      onToggle={onToggle}
+      onOpen={onOpen}
+      onForget={onForget}
+    />
+  );
+
   if (viewMode === 'list') {
-    return (
-      <div className="flex flex-col gap-1.5">
-        {people.map((person) => (
-          <PersonRow
-            key={person.id}
-            person={person}
-            busy={busy}
-            onOpen={onOpen}
-            onForget={onForget}
-          />
-        ))}
-      </div>
-    );
+    return <div className="flex flex-col gap-1.5">{people.map(row)}</div>;
   }
 
   if (viewMode === 'timeline') {
@@ -150,17 +209,7 @@ export function PeopleViews({ people, busy, onOpen, onRename, onForget }: People
                 {month.members.length === 1 ? 'person' : 'people'}
               </span>
             </div>
-            <div className="flex flex-col gap-1.5">
-              {month.members.map((person) => (
-                <PersonRow
-                  key={person.id}
-                  person={person}
-                  busy={busy}
-                  onOpen={onOpen}
-                  onForget={onForget}
-                />
-              ))}
-            </div>
+            <div className="flex flex-col gap-1.5">{month.members.map(row)}</div>
           </section>
         ))}
       </div>
@@ -169,16 +218,35 @@ export function PeopleViews({ people, busy, onOpen, onRename, onForget }: People
 
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
-      {people.map((person) => (
-        <PersonCard
-          key={person.id}
-          person={person}
-          busy={busy}
-          onOpen={() => onOpen(person.id)}
-          onRename={(label) => onRename(person.id, label)}
-          onForget={() => onForget(person)}
-        />
-      ))}
+      {people.map((person) => {
+        const picked = selected.includes(person.id);
+        return (
+          <div key={person.id} className="relative">
+            <PersonCard
+              person={person}
+              busy={busy}
+              selecting={selecting}
+              selected={picked}
+              onOpen={() => (selecting ? onToggle?.(person.id) : onOpen(person.id))}
+              onRename={(label) => onRename(person.id, label)}
+              onForget={() => onForget(person)}
+            />
+            {selecting && (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'pointer-events-none absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 transition-colors duration-150',
+                  picked
+                    ? 'border-accent bg-accent text-white'
+                    : 'border-line-strong bg-surface/85',
+                )}
+              >
+                {picked && <Icon name="Check" size={13} strokeWidth={3} />}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

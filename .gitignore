@@ -13,6 +13,9 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/.cargo/
 
+# staged installers — produced by `npm run release`, not source
+public/downloads/
+
 # python service
 __pycache__/
 *.py[cod]

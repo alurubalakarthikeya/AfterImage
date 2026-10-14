@@ -367,7 +367,11 @@ def index_describe(request: IndexRequest) -> DescribeResponse:
             ),
         )
 
-    result = describe_module.describe(picture, subject)  # type: ignore[arg-type]
+    # Descriptions are the desktop shell's decision to make: it sends the model
+    # it wants and only when the user asked for it. Nothing else in this request
+    # changes what is sent to the model — the picture is the same picture.
+    vlm_model = request.vlm_model if request.vlm_enabled else None
+    result = describe_module.describe(picture, subject, vlm_model)  # type: ignore[arg-type]
 
     return DescribeResponse(
         fileId=request.file_id,

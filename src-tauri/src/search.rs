@@ -13,6 +13,14 @@
 //! strings, code identifiers. Similarity only fills in when the words are not
 //! there. The optional local model never searches the archive: it rewrites the
 //! question into criteria, and the criteria are what run.
+//!
+//! Which candidates come back is one question and which of them comes *first*
+//! is another. The index finds files that share any word with the query; the
+//! ranking then asks how much of the query each of them accounts for — how many
+//! of the words the user said appear in what was written about the file, and how
+//! many of them stand next to each other. That is what makes "a man beside a red
+//! motorcycle on a rainy street" return the photograph described in those words
+//! rather than the file that happens to be named `red`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -170,6 +178,131 @@ fn tokens(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// A word without its plural, so `motorcycles` reaches `motorcycle`.
+///
+/// Deliberately narrow. A real stemmer turns `during` into `dur` and loses more
+/// than it gains on a query this short; what is left of the problem — an
+/// unfinished word matching a finished one — is already solved by prefix
+/// matching in the index. Between the two, a query and a caption meet far more
+/// often than they did.
+fn stem(word: &str) -> String {
+    let value = word.to_lowercase();
+    if value.chars().count() <= 3 {
+        return value;
+    }
+    if value.ends_with("ies") && value.chars().count() > 4 {
+        return format!("{}y", &value[..value.len() - 3]);
+    }
+    if value.ends_with("sses") {
+        return value[..value.len() - 2].to_string();
+    }
+    if value.ends_with('s')
+        && !value.ends_with("ss")
+        && !value.ends_with("us")
+        && !value.ends_with("is")
+    {
+        return value[..value.len() - 1].to_string();
+    }
+    value
+}
+
+/// Words that mean the same thing, for the words people actually alternate.
+///
+/// `bike` against a description that says `motorcycle` is a miss no amount of
+/// prefix matching can recover, and it is the kind of miss that makes a search
+/// feel broken rather than empty. Each list is small and concrete — the objects
+/// a caption is likely to name — because a table that guesses at meaning is a
+/// table that returns the wrong pictures.
+const SYNONYM_GROUPS: &[&[&str]] = &[
+    &["motorcycle", "motorbike", "bike", "scooter", "moped"],
+    &["car", "automobile", "sedan", "van"],
+    &["bicycle", "cycle", "bike"],
+    &["sofa", "couch", "settee"],
+    &["dog", "puppy", "pup"],
+    &["cat", "kitten"],
+    &["child", "kid", "baby", "toddler"],
+    &["person", "people", "man", "woman", "guy", "girl", "boy", "someone", "face"],
+    &["phone", "smartphone", "mobile", "iphone", "android"],
+    &["laptop", "notebook", "macbook", "computer", "desktop"],
+    &["screen", "monitor", "display"],
+    &["hoodie", "hoody", "sweatshirt"],
+    &["jacket", "coat"],
+    &["shirt", "tshirt", "tee"],
+    &["trousers", "pants", "jeans"],
+    &["shoe", "sneaker", "trainer", "boot"],
+    &["table", "desk"],
+    &["chair", "seat", "stool"],
+    &["building", "house", "architecture", "home"],
+    &["mountain", "hill", "peak"],
+    &["beach", "shore", "seaside", "coast"],
+    &["water", "sea", "ocean", "lake", "river"],
+    &["tree", "forest", "woods"],
+    &["sunset", "sundown", "dusk", "sunrise", "dawn"],
+    &["rain", "rainy", "raining", "downpour", "wet"],
+    &["street", "road", "avenue", "highway"],
+    &["food", "meal", "dinner", "lunch", "breakfast"],
+    &["coffee", "espresso", "cappuccino", "latte"],
+    &["text", "writing", "words"],
+    &["paper", "document", "form"],
+    &["window", "glass"],
+    &["flower", "plant"],
+    &["rug", "carpet", "mat"],
+    &["bag", "backpack", "rucksack", "handbag"],
+    &["glasses", "spectacles"],
+    &["wedding", "bride", "groom"],
+    &["party", "celebration", "birthday"],
+];
+
+/// The other names for a word, or nothing when it has none.
+///
+/// Every family the word belongs to, not the first: `bike` is both a motorcycle
+/// and a bicycle, and a caption could have said either.
+fn synonyms(word: &str) -> Vec<&'static str> {
+    let wanted = stem(word);
+    let mut found: Vec<&'static str> = Vec::new();
+    for group in SYNONYM_GROUPS {
+        if !group.iter().any(|name| stem(name) == wanted) {
+            continue;
+        }
+        for name in *group {
+            if !found.contains(name) {
+                found.push(name);
+            }
+        }
+    }
+    found
+}
+
+/// Every spelling of a term the index might be holding it under.
+///
+/// A plural, a singular and the synonyms of one word. Only single words are
+/// pluralised: a quoted phrase is already a demand about its exact words, and
+/// inventing a plural for it would change what the user asked for.
+fn variants(term: &str) -> Vec<String> {
+    let value = term.to_lowercase();
+    let mut out = vec![value.clone()];
+    let mut push = |candidate: String, out: &mut Vec<String>| {
+        if !candidate.is_empty() && !out.iter().any(|held| *held == candidate) {
+            out.push(candidate);
+        }
+    };
+
+    if tokens(&value).len() == 1 {
+        let base = stem(&value);
+        if base != value {
+            push(base.clone(), &mut out);
+        }
+        if !base.ends_with('s') {
+            push(format!("{base}s"), &mut out);
+        }
+        for name in synonyms(&base) {
+            push(name.to_lowercase(), &mut out);
+        }
+    }
+
+    out
+}
+
 /// Rules-based interpretation: everything expressible in a word or two.
 ///
 /// `kind:screenshot`, `#react`, `is:fav`, `since:7`, plus quoted phrases and
@@ -319,23 +452,35 @@ fn match_expression(terms: &[String]) -> Option<String> {
             _ => (None, term.clone()),
         };
 
-        let term_tokens = tokens(&value);
-        if term_tokens.is_empty() {
-            continue;
-        }
+        // Each spelling of the word is its own alternative, so `bikes` also asks
+        // for `bike` and `motorcycle` — the index is asked the question in every
+        // wording the user might have meant, and the ranking below decides which
+        // of the answers is the one.
+        let mut alternatives: Vec<String> = Vec::new();
+        for spelling in variants(&value) {
+            let term_tokens = tokens(&spelling);
+            if term_tokens.is_empty() {
+                continue;
+            }
 
-        let mut expression = String::new();
-        for token in &term_tokens {
-            if !expression.is_empty() {
-                expression.push_str(" AND ");
+            let mut expression = String::new();
+            for token in &term_tokens {
+                if !expression.is_empty() {
+                    expression.push_str(" AND ");
+                }
+                match column {
+                    Some(column) => expression.push_str(&format!("{{{column}}} : \"{token}\"*")),
+                    None => expression.push_str(&format!("\"{token}\"*")),
+                }
             }
-            match column {
-                Some(column) => expression.push_str(&format!("{{{column}}} : \"{token}\"*")),
-                None => expression.push_str(&format!("\"{token}\"*")),
+            if !expression.is_empty() && !alternatives.contains(&expression) {
+                alternatives.push(expression);
             }
         }
-        if !expression.is_empty() {
-            parts.push(format!("({expression})"));
+        if alternatives.len() == 1 {
+            parts.push(format!("({})", alternatives[0]));
+        } else if !alternatives.is_empty() {
+            parts.push(format!("({})", alternatives.join(" OR ")));
         }
     }
 
@@ -387,6 +532,74 @@ fn snippet_for(text: &str, terms: &[String], width: usize) -> Option<String> {
 
 fn contains(value: &str, needle: &str) -> bool {
     !needle.is_empty() && value.to_lowercase().contains(&needle.to_lowercase())
+}
+
+/// How much of the question a file accounts for, in the words written about it.
+///
+/// Full-text search answers "was any of this in there" — bm25 ranks how well,
+/// but a file that matches one common word and a file that accounts for every
+/// word the user said come out close together, and the wrong one can win. This
+/// is the missing half: the fraction of the query's words that appear in what
+/// the archive wrote about the file, plus how many of them stand next to each
+/// other.
+///
+/// It only ever *adds* to a score. A file that reaches the results some other
+/// way — a tag the user typed, a name, a person — is not punished for having no
+/// description, because most of an archive has none and those files are still
+/// the right answer to the question that found them.
+///
+/// Returns `(covered, phrases)`, both already scaled to what they are worth.
+fn described_score(written: &[&str], terms: &[String]) -> (f64, f64) {
+    let wanted: Vec<String> = terms
+        .iter()
+        .filter(|term| !term.contains(':'))
+        .map(|term| term.to_lowercase())
+        .collect();
+    if wanted.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    let held: Vec<String> = tokens(&written.join(" "))
+        .into_iter()
+        .map(|token| stem(&token))
+        .collect();
+    if held.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    let mut flags: Vec<bool> = Vec::with_capacity(wanted.len());
+    let mut matched = 0.0;
+    for term in &wanted {
+        let base = stem(term);
+        let hit = held.iter().any(|token| *token == base)
+            || (base.len() >= 3 && held.iter().any(|token| token.starts_with(&base)))
+            || synonyms(term)
+                .iter()
+                .any(|name| held.iter().any(|token| *token == stem(name)));
+        if hit {
+            matched += 1.0;
+        }
+        flags.push(hit);
+    }
+
+    // Two words standing together are a phrase the user described — "rainy
+    // street", "red motorcycle" — and adjacency is evidence that a bag of words
+    // throws away.
+    let mut together = 0.0;
+    for index in 0..wanted.len().saturating_sub(1) {
+        if !flags[index] || !flags[index + 1] {
+            continue;
+        }
+        let (left, right) = (stem(&wanted[index]), stem(&wanted[index + 1]));
+        let adjacent = held.iter().enumerate().any(|(position, token)| {
+            *token == left && held.get(position + 1).is_some_and(|next| *next == right)
+        });
+        if adjacent {
+            together += 1.0;
+        }
+    }
+
+    (matched / wanted.len() as f64, together)
 }
 
 /// Where a hit matched, in the vocabulary the results list uses.
@@ -737,6 +950,31 @@ impl<'a> Retrieval<'a> {
             }
             if match_kind == "tag" {
                 score += 0.1;
+            }
+
+            // How much of the question this file actually accounts for — the
+            // half of ranking that decides between candidates rather than
+            // finding them. A photograph described as "a red motorcycle on a
+            // rainy street" holds every word of that query; a file that only
+            // shares one of them should not be able to outrank it.
+            if !parsed.terms.is_empty() {
+                let labels = file.labels.join(" ");
+                let tags = tag_names.join(" ");
+                let mut written: Vec<&str> = Vec::with_capacity(5);
+                for text in [
+                    file.description.as_deref(),
+                    file.generated_title.as_deref(),
+                    file.ocr_text.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    written.push(text);
+                }
+                written.push(labels.as_str());
+                written.push(tags.as_str());
+                let (covered, together) = described_score(&written, &parsed.terms);
+                score += 0.24 * covered + 0.035 * together;
             }
             if let Some(similarity) = semantic_score {
                 score += 0.28 * similarity.clamp(0.0, 1.0);
@@ -1096,6 +1334,66 @@ mod tests {
         let parsed = parse_rules("show me that screenshot of the receipt");
         assert_eq!(parsed.kinds, vec!["screenshot".to_string()]);
         assert_eq!(parsed.terms, vec!["receipt".to_string()]);
+    }
+
+    /// A plural and a singular are the same word, so a caption written in one
+    /// answers a query written in the other.
+    #[test]
+    fn plurals_reach_the_singular() {
+        assert_eq!(stem("motorcycles"), "motorcycle");
+        assert_eq!(stem("dogs"), "dog");
+        assert_eq!(stem("classes"), "class");
+        // Not plurals, and left alone: `analysis` is not `analysi`.
+        assert_eq!(stem("analysis"), "analysis");
+        assert_eq!(stem("glass"), "glass");
+    }
+
+    /// The index is asked in every wording the user might have meant.
+    #[test]
+    fn a_word_the_caption_did_not_use_still_matches() {
+        let expression = match_expression(&["bikes".to_string()]).expect("an expression");
+        assert!(expression.contains("\"bike\"*"), "{expression}");
+        assert!(expression.contains("\"bicycle\"*"), "{expression}");
+        assert!(expression.contains("\"motorcycle\"*"), "{expression}");
+    }
+
+    /// A quoted phrase is a demand about its exact words.
+    #[test]
+    fn a_phrase_is_never_pluralised() {
+        let expression = match_expression(&["not found".to_string()]).expect("an expression");
+        assert!(!expression.contains("founds"), "{expression}");
+    }
+
+    /// Coverage: the fraction of the question the words about a file account
+    /// for. This is what orders two files the index found equally well.
+    #[test]
+    fn coverage_counts_how_much_of_the_question_is_answered() {
+        let written = [
+            "A man wearing a black hoodie standing beside a red motorcycle on a rainy city street at night.",
+        ];
+        let (all, _) = described_score(
+            &written,
+            &["red".to_string(), "motorcycle".to_string(), "night".to_string()],
+        );
+        assert!((all - 1.0).abs() < 1e-9, "{all}");
+
+        let (some, _) = described_score(&written, &["red".to_string(), "helicopter".to_string()]);
+        assert!((some - 0.5).abs() < 1e-9, "{some}");
+
+        let (none, _) = described_score(&["A bright room."], &["helicopter".to_string()]);
+        assert_eq!(none, 0.0);
+    }
+
+    /// Two words side by side in a caption are a phrase, and a phrase is
+    /// evidence that neither word carries on its own.
+    #[test]
+    fn adjacent_words_are_a_phrase() {
+        let written = ["A dog sleeping on a grey sofa in a bright room."];
+        let (_, together) = described_score(&written, &["grey".to_string(), "sofa".to_string()]);
+        assert_eq!(together, 1.0);
+
+        let (_, apart) = described_score(&written, &["dog".to_string(), "sofa".to_string()]);
+        assert_eq!(apart, 0.0);
     }
 
     /// A date word has to stand on its own.

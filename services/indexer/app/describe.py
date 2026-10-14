@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import vision
+from . import vlm
 from .capabilities import detect
 from .config import get_settings
 from . import embed
@@ -222,6 +223,27 @@ def labels_for(path: str, kind: str) -> list[str]:
 
     ranked = sorted(scores.items(), key=lambda item: -item[1])
     kept = [label for label, score in ranked if score >= settings.label_floor]
+
+    # When nothing clears the floor, the top label is kept if it is decisively
+    # ahead of the next one.
+    #
+    # This is the difference between an archive whose photographs have tags and
+    # one whose photographs have none. Zero-shot probabilities over a couple of
+    # dozen prompts are small by construction — a clear photograph of somebody
+    # scores "selfie" at 0.16 and the runner-up at 0.11 — so an absolute floor
+    # calibrated on a sharper distribution threw away the model's only real
+    # answer and left the file looking at never having been looked at. What CLIP
+    # is actually good at is the *ranking*; a decisive lead is the evidence, not
+    # the absolute number.
+    if not kept and ranked:
+        top_label, top_score = ranked[0]
+        runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
+        if (
+            top_score >= settings.relative_label_floor
+            and top_score >= runner_up * settings.label_lead
+        ):
+            kept = [top_label]
+
     # A confident top label plus three more is plenty; past that the panel
     # becomes noise and the search index fills with noise to match.
     return kept[:4]
@@ -251,8 +273,13 @@ def _sentence(labels: list[str], kind: str) -> str | None:
     return f"{sentence}."
 
 
-def describe(path: str, kind: str) -> Description:
-    """Everything this machine can honestly say about one image."""
+def describe(path: str, kind: str, vlm_model: str | None = None) -> Description:
+    """Everything this machine can honestly say about one image.
+
+    ``vlm_model`` is the desktop shell asking for a description with a named
+    vision model. ``None`` means the service's own setting decides, which is
+    what a hand-run of this route gets.
+    """
     settings = get_settings()
     if not settings.vision_enabled:
         return Description(reason="image understanding is turned off")
@@ -261,16 +288,58 @@ def describe(path: str, kind: str) -> Description:
     labels = labels_for(path, kind)
     title = caption(path) if kind in {"photo", "screenshot", "design"} else None
     description = _sentence(labels, kind)
+    engine = "blip+clip" if title else ("clip-onnx" if vision.available() else "clip")
+
+    # ---- the vision model, when this machine has one ---------------------
+    #
+    # It is asked *after* the fixed-vocabulary path has run, and it may only
+    # add to what that path found: the CLIP labels are a measured answer to a
+    # fixed question, and a chat model's opinion does not make them wrong. What
+    # it contributes is the part CLIP structurally cannot produce — a sentence
+    # in the words a person would search with, and objects outside the prompt
+    # list ("red motorcycle", "rainy street").
+    #
+    # A model that is off, unreachable or wrong changes nothing: `vlm.describe`
+    # returns a reason instead of an exception, and the description below stays
+    # the one the classifier wrote.
+    if kind in {"photo", "screenshot", "design", "document"}:
+        seen = vlm.describe(path, vlm_model)
+        if seen.available:
+            if seen.description:
+                description = seen.description
+            # Only a model-written title replaces BLIP's: BLIP is a captioner,
+            # and a caption it actually produced is evidence, not a fallback.
+            if seen.title:
+                title = seen.title
+            elif not title and seen.description:
+                title = _clean_caption(seen.description)
+            merged: list[str] = []
+            for label in seen.labels + labels:
+                if label and label not in merged:
+                    merged.append(label)
+            labels = merged[:6]
+            engine = seen.engine
+            return Description(
+                title=title,
+                description=description,
+                labels=labels,
+                engine=engine,
+                available=True,
+            )
 
     if title is None and not labels and description is None:
+        # Answered from the bundle on disk rather than from `available`, which
+        # is the capability probe taken when this service started: a service
+        # that has been running since before the models were fetched would
+        # otherwise keep reporting them missing, which is the one thing this
+        # sentence must never get wrong.
         reason = (
             "no vision model is installed"
-            if not (available.image_embeddings or available.image_captions)
+            if not vision.available()
             else "this image produced no usable description"
         )
         return Description(reason=reason)
 
-    engine = "blip+clip" if title else ("clip-onnx" if vision.available() else "clip")
     return Description(
         title=title,
         description=description,

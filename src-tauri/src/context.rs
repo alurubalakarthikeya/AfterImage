@@ -14,9 +14,9 @@
 //!
 //! Where the evidence comes from, in order of strength:
 //!
-//!     1. the local vision model's labels (a real classifier's opinion)
-//!     2. the file's own extracted text (OCR or a PDF text layer)
-//!     3. the filename and the kind the scan already assigned
+//! 1. the local vision model's labels (a real classifier's opinion)
+//! 2. the file's own extracted text (OCR or a PDF text layer)
+//! 3. the filename and the kind the scan already assigned
 //!
 //! Everything here is a lookup over text the pipeline already has, so it costs
 //! nothing, works on a machine with no model installed, and — unlike a model —

@@ -124,6 +124,15 @@ export interface HostPreferences {
   llmEnabled?: boolean;
   /** Which local model to use, when one is enabled. */
   llmModel?: string;
+  /**
+   * Let a local vision model write a description of each photograph.
+   *
+   * Separate from `llmEnabled` because it costs something different: one call
+   * per query against one call per photograph.
+   */
+  vlmEnabled?: boolean;
+  /** Which vision model looks at the pictures, when descriptions are on. */
+  vlmModel?: string;
 }
 
 export type HostEvent =
@@ -197,6 +206,19 @@ export interface ArchiveHost {
   renamePerson(personId: string, label: string | null): Promise<void>;
   /** Fold one group into another — the correction for a wrong merge. */
   mergePeople(fromId: string, intoId: string): Promise<void>;
+  /**
+   * Fold several groups into one — "these are all Rahul".
+   *
+   * One operation rather than a loop over `mergePeople`, because the interface
+   * offers a single undo for the whole selection and a half-applied loop would
+   * have nothing to take back.
+   */
+  mergePeopleMany(fromIds: string[], intoId: string): Promise<void>;
+  /**
+   * Take back the last merge. Answers whether there was one to undo; the
+   * groups come back with their names, their counts and their exact faces.
+   */
+  undoPeopleMerge(): Promise<boolean>;
   setPersonHidden(personId: string, hidden: boolean): Promise<void>;
   /**
    * Delete a group and the faces behind it, for the clusters that were never a

@@ -101,6 +101,198 @@ export function normalise(value: string): string[] {
     .filter((token) => token.length > 0);
 }
 
+/**
+ * Words that carry no claim about a file.
+ *
+ * A sentence is mostly grammar. "The photo where I'm standing beside a red
+ * motorcycle" is one fact surrounded by nine words that describe the *sentence*
+ * rather than the picture, and every one of them would match something: `i`
+ * starts `img_4021`, `m` starts half the extensions in the archive, `the`
+ * appears in a thousand filenames. Left in, they add a facet to every file in
+ * the archive, which is the same as adding a facet to none — while letting the
+ * one word that matters compete with the noise for the candidate budget.
+ *
+ * They are dropped only when the query says something without them. A query of
+ * nothing but filler keeps every word, because somebody who types `the` on its
+ * own is still looking for a file called `the`.
+ */
+const STOP_WORDS = new Set([
+  'a', 'about', 'above', 'after', 'again', 'against', 'all', 'also', 'am', 'an', 'and', 'any', 'are',
+  'around', 'as', 'at', 'be', 'because', 'been', 'being', 'below', 'beside', 'between', 'beyond', 'but',
+  'by', 'can', 'could', 'd', 'did', 'do', 'does', 'doing', 'down', 'during', 'each', 'find', 'for', 'from',
+  'get', 'give', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'him', 'his', 'how', 'i',
+  'if', 'in', 'into', 'is', 'it', 'its', 'just', 'like', 'll', 'look', 'looking', 'm', 'may', 'me', 'might',
+  'mine', 'must', 'my', 'near', 'next', 'no', 'nor', 'not', 'of', 'off', 'on', 'onto', 'or', 'our', 'ours',
+  'out', 'over', 'own', 'please', 're', 's', 'same', 'search', 'she', 'should', 'show', 'so', 'some', 'still',
+  'such', 't', 'than', 'that', 'the', 'their', 'theirs', 'them', 'then', 'there', 'these', 'they', 'this',
+  'those', 'through', 'to', 'too', 'under', 'until', 'up', 'upon', 'us', 've', 'very', 'was', 'we', 'were',
+  'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'within', 'without',
+  'would', 'you', 'your', 'yours',
+]);
+
+/**
+ * The words people use for "a picture" rather than for a kind of file.
+ *
+ * `screenshot` and `video` are unambiguous — somebody typing them means the
+ * filter. `photo`, `image` and `picture` are not: they are how a sentence about
+ * a photograph starts, and treating them as a filter in "the photo where I'm
+ * standing beside a red motorcycle" would hide every screenshot the archive
+ * could have answered with, including the one being described. On their own,
+ * with nothing else around them, they still mean the kind — that is what this
+ * set exists to tell apart.
+ */
+const SOFT_KIND_WORDS = new Set([
+  'photo', 'photos', 'photograph', 'photographs', 'image', 'images', 'picture', 'pictures', 'pic', 'pics',
+]);
+
+/**
+ * Words that mean the same thing, for the words people actually alternate.
+ *
+ * `bike` against a description that says `motorcycle` is a miss no amount of
+ * prefix matching can recover, and it is the kind of miss that makes a search
+ * feel broken rather than empty. Each list is deliberately small and concrete —
+ * one for the objects a caption is likely to name — because a synonym table
+ * that guesses at meaning is a table that returns the wrong pictures.
+ */
+const SYNONYM_GROUPS: string[][] = [
+  ['motorcycle', 'motorbike', 'bike', 'scooter', 'moped'],
+  ['car', 'automobile', 'sedan', 'van'],
+  ['bicycle', 'cycle', 'bike'],
+  ['sofa', 'couch', 'settee'],
+  ['dog', 'puppy', 'pup'],
+  ['cat', 'kitten'],
+  ['child', 'kid', 'baby', 'toddler'],
+  ['person', 'people', 'man', 'woman', 'guy', 'girl', 'boy', 'someone', 'face'],
+  ['phone', 'smartphone', 'mobile', 'iphone', 'android'],
+  ['laptop', 'notebook', 'macbook', 'computer', 'desktop'],
+  ['screen', 'monitor', 'display'],
+  ['hoodie', 'hoody', 'sweatshirt'],
+  ['jacket', 'coat'],
+  ['shirt', 'tshirt', 'tee'],
+  ['trousers', 'pants', 'jeans'],
+  ['shoe', 'sneaker', 'trainer', 'boot'],
+  ['table', 'desk'],
+  ['chair', 'seat', 'stool'],
+  ['building', 'house', 'architecture', 'home'],
+  ['mountain', 'hill', 'peak'],
+  ['beach', 'shore', 'seaside', 'coast'],
+  ['water', 'sea', 'ocean', 'lake', 'river'],
+  ['tree', 'forest', 'woods'],
+  ['sunset', 'sundown', 'dusk', 'sunrise', 'dawn'],
+  ['rain', 'rainy', 'raining', 'downpour', 'wet'],
+  ['street', 'road', 'avenue', 'highway'],
+  ['food', 'meal', 'dinner', 'lunch', 'breakfast'],
+  ['coffee', 'espresso', 'cappuccino', 'latte'],
+  ['text', 'writing', 'words'],
+  ['paper', 'document', 'form'],
+  ['window', 'glass'],
+  ['flower', 'plant', 'plantpot'],
+  ['rug', 'carpet', 'mat'],
+  ['wall', 'wallpaper'],
+  ['bag', 'backpack', 'rucksack', 'handbag'],
+  ['glasses', 'spectacles'],
+  ['wedding', 'bride', 'groom'],
+  ['party', 'celebration', 'birthday'],
+];
+
+const SYNONYM_INDEX = ((): Map<string, number[]> => {
+  const index = new Map<string, number[]>();
+  SYNONYM_GROUPS.forEach((group) => {
+    for (const word of group) {
+      const key = stem(word);
+      const held = index.get(key);
+      // A word can belong to more than one family — `bike` is both a motorcycle
+      // and a bicycle — and a caption could have said either of them.
+      if (held) held.push(SYNONYM_GROUPS.indexOf(group));
+      else index.set(key, [SYNONYM_GROUPS.indexOf(group)]);
+    }
+  });
+  return index;
+})();
+
+/**
+ * A word without its plural, so `motorcycles` reaches `motorcycle`.
+ *
+ * Only the endings English actually uses for this — a full stemmer would turn
+ * `during` into `dur` and lose more than it gains. Prefix matching covers the
+ * other half of the problem (an unfinished word matching a finished one), and
+ * between them a query and a caption meet far more often than they did.
+ */
+export function stem(word: string): string {
+  const value = word.toLowerCase();
+  if (value.length <= 3) return value;
+  if (value.endsWith('ies') && value.length > 4) return `${value.slice(0, -3)}y`;
+  if (value.endsWith('sses')) return value.slice(0, -2);
+  if (value.endsWith('s') && !value.endsWith('ss') && !value.endsWith('us') && !value.endsWith('is')) {
+    return value.slice(0, -1);
+  }
+  return value;
+}
+
+/** Whether two words are different names for the same thing. */
+function sameThing(left: string, right: string): boolean {
+  const a = SYNONYM_INDEX.get(stem(left));
+  const b = SYNONYM_INDEX.get(stem(right));
+  if (!a || !b) return false;
+  return a.some((family) => b.includes(family));
+}
+
+/**
+ * Date phrases, in the words people type in a sentence.
+ *
+ * The desktop build has always understood `since:7d`; a person describing a
+ * photograph writes "from last summer" instead. Longest phrase first, so
+ * "this time last year" cannot be read as two shorter ones, and the words a
+ * matched phrase is built from are dropped — "in the last two weeks" leaves no
+ * `last` or `weeks` behind to be searched for as keywords.
+ */
+const DAY_PHRASES: [string, number][] = [
+  ['this morning', 1],
+  ['this evening', 1],
+  ['last night', 2],
+  ['the other day', 3],
+  ['last week', 7],
+  ['this week', 7],
+  ['past week', 7],
+  ['last month', 30],
+  ['this month', 30],
+  ['past month', 30],
+  ['last year', 365],
+  ['this year', 365],
+  ['past year', 365],
+  ['today', 1],
+  ['tonight', 1],
+  ['yesterday', 2],
+  ['recently', 14],
+  ['recent', 14],
+];
+
+const DATE_VOCABULARY = new Set([
+  'today', 'tonight', 'yesterday', 'morning', 'evening', 'night', 'other', 'day', 'last', 'this', 'past',
+  'week', 'month', 'year', 'recent', 'recently',
+]);
+
+/**
+ * The words a query contains that are claims about a file.
+ *
+ * Used only to decide whether filler can be dropped: a query with one real word
+ * in it can afford to lose the grammar, and a query with none cannot lose
+ * anything.
+ */
+function contentWordCount(pieces: string[]): number {
+  let count = 0;
+  for (const piece of pieces) {
+    if (piece.startsWith('"') || piece.startsWith('#') || piece.includes(':')) continue;
+    const body = piece.startsWith('-') ? piece.slice(1) : piece;
+    if (body.length === 0) continue;
+    for (const word of normalise(body)) {
+      if (STOP_WORDS.has(word) || SOFT_KIND_WORDS.has(word) || DATE_VOCABULARY.has(word)) continue;
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function parseDurationDays(value: string): number | null {
   const match = value.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([dwmy]?)$/);
   if (!match) return null;
@@ -213,6 +405,21 @@ export interface SearchFilters {
   folderId?: string;
   favoritesOnly?: boolean;
   sinceDays?: number;
+}
+
+/**
+ * A query after parsing, before any archive filters are laid over it.
+ *
+ * Deliberately the same shape as [`Criteria`] without the filters: parsing
+ * knows about the text a person typed, and nothing about which folder, tag or
+ * collection the search is scoped to — those are added by `buildCriteria` from
+ * the interface's own state.
+ */
+export interface ParsedQuery {
+  groups: Group[];
+  exclude: Exclusion;
+  /** Every term in the query, negated or not. What the index is seeded from. */
+  all: string[];
 }
 
 export interface Criteria {
@@ -426,6 +633,26 @@ export function parseQuery(raw: string, now: number): ParsedQuery {
   const exclude = emptyExclusion();
   const all: string[] = [];
 
+  // Date phrases are read off the whole string before anything is tokenised, so
+  // the two words of "last week" can never be searched for as words. The
+  // longest phrase wins, and every phrase's words are dropped once one matches.
+  const lowered = raw.toLowerCase();
+  const matchedDates: [string, number][] = DAY_PHRASES.filter(([phrase]) =>
+    lowered.includes(phrase),
+  ).sort((left, right) => right[0].length - left[0].length);
+  const dateDays = matchedDates.reduce<number | null>(
+    (best, [, days]) => (best === null ? days : Math.max(best, days)),
+    null,
+  );
+  const dateWords = dateDays === null ? null : new Set(matchedDates.flatMap(([phrase]) => normalise(phrase)));
+  if (dateDays !== null) groups[0].sinceDays = dateDays;
+
+  // Whether there is anything here but grammar. A sentence gets its filler
+  // removed; a query that is nothing but filler keeps all of it — unless a date
+  // phrase already said what it means, in which case the remaining words are
+  // grammar around a question the archive can answer.
+  const descriptive = contentWordCount(pieces) > 0 || dateDays !== null;
+
   for (const piece of pieces) {
     if (piece === 'OR' || piece === 'or' || piece === '|') {
       // A trailing `OR` is a half-finished thought, not a second group.
@@ -485,8 +712,22 @@ export function parseQuery(raw: string, now: number): ParsedQuery {
       }
     }
 
+    const lowered = body.toLowerCase();
+    // "photo" inside a sentence is how the sentence is worded, not a request for
+    // the file type. On its own, with nothing said around it, it is the type.
+    if (!negated && descriptive && SOFT_KIND_WORDS.has(lowered)) continue;
+
     const words = normalise(body);
-    const kind = words.length === 1 ? KIND_WORDS[body.toLowerCase()] : undefined;
+    const kind = words.length === 1 ? KIND_WORDS[lowered] : undefined;
+    // Filler only goes when it is standing next to something worth reading, and
+    // never when it was negated: `-dark` is a demand, and so is `-the`.
+    const kept =
+      descriptive && !negated
+        ? words.filter(
+            (word) =>
+              !STOP_WORDS.has(word) && !(dateWords?.has(word) ?? false),
+          )
+        : words;
     if (negated) {
       if (kind) exclude.kinds.push(kind);
       else exclude.words.push(...words);
@@ -496,9 +737,9 @@ export function parseQuery(raw: string, now: number): ParsedQuery {
       // happen to contain the word.
       addKind(group, kind);
     } else {
-      group.words.push(...words);
+      group.words.push(...kept);
     }
-    all.push(...words);
+    all.push(...kept);
   }
 
   return { groups: groups.filter(hasClause), exclude, all };
@@ -858,6 +1099,8 @@ export const QUERY_HELP: { syntax: string; what: string }[] = [
   { syntax: '-screenshot', what: 'Anything marked with a minus is excluded.' },
   { syntax: 'photo OR video', what: 'Either of two searches. Everything else is all of them.' },
   { syntax: 'tall dark blurry', what: 'Describe the picture: shape, tone, colour, detail and size, as measured.' },
+  { syntax: 'a dog on the sofa', what: 'Describe what is in the photo. Matches the description and labels written for it, so a file called IMG_4021.jpg can still be found.' },
+  { syntax: 'last summer', what: 'Plain-English dates too — today, yesterday, last week, this month, recently.' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -876,10 +1119,13 @@ function haystacks(file: ArchiveFile, context: QueryContext): Haystack[] {
   return [
     { text: file.name, weight: 6, match: 'filename' },
     { text: file.generatedTitle ?? '', weight: 4, match: 'filename' },
-    { text: file.description ?? '', weight: 3, match: 'text' },
+    // What a model wrote about the picture is ranked *above* the file's own
+    // path: a caption is a statement about what is in the image, and a folder
+    // called "2024" is not. These are the fields a described search lives on.
+    { text: file.description ?? '', weight: 3.5, match: 'described' },
+    { text: file.labels.join(' '), weight: 3, match: 'described' },
     { text: file.context ?? '', weight: 2.5, match: 'text' },
     { text: file.folderPath, weight: 2.5, match: 'folder' },
-    { text: file.labels.join(' '), weight: 2, match: 'text' },
     { text: file.ocrText ?? '', weight: 2, match: 'text' },
     { text: tagNames, weight: 3, match: 'tag' },
     { text: collectionNames, weight: 2, match: 'collection' },
@@ -894,24 +1140,55 @@ function haystacks(file: ArchiveFile, context: QueryContext): Haystack[] {
  * Exact beats prefix beats containment, because that is the order in which a
  * person means them: `beach` in a filename is the beach, `bea` inside
  * "beautiful" is a search still being typed.
+ *
+ * Plurals and the words people alternate are read as the same word: a caption
+ * that says `motorcycle` answers a query that says `bikes`, because the whole
+ * point of searching a written description is that it was written by somebody
+ * else. That match sits between exact and prefix in strength — it is a real
+ * match of meaning, not the same string.
  */
 function textScore(word: string, fields: Haystack[]): { score: number; match: SearchHit['match'] | null } {
+  const wanted = stem(word);
   let best = 0;
   let match: SearchHit['match'] | null = null;
   for (const field of fields) {
     if (!field.text) continue;
     const tokens = normalise(field.text);
     if (tokens.length === 0) continue;
+    const stems = tokens.map(stem);
     let score = 0;
     if (tokens.includes(word)) score = field.weight * 2;
-    else if (tokens.some((token) => token.startsWith(word))) score = field.weight;
-    else if (word.length >= 3 && tokens.join(' ').includes(word)) score = field.weight * 0.4;
+    else if (stems.includes(wanted)) score = field.weight * 1.9;
+    else if (stems.some((token) => token.startsWith(wanted))) score = field.weight;
+    else if (wanted.length >= 3 && stems.some((token) => sameThing(token, wanted))) {
+      score = field.weight * 1.4;
+    } else if (wanted.length >= 3 && stems.join(' ').includes(wanted)) score = field.weight * 0.4;
     if (score > best) {
       best = score;
       match = field.match;
     }
   }
   return { score: best, match };
+}
+
+/**
+ * Whether two words stand next to each other in any field.
+ *
+ * "rainy street" in a caption is a claim about a photograph that neither
+ * `rainy` nor `street` makes on its own, and it is free to check once the words
+ * are already known to be present.
+ */
+function adjacent(left: string, right: string, fields: Haystack[]): boolean {
+  const first = stem(left);
+  const second = stem(right);
+  for (const field of fields) {
+    if (!field.text) continue;
+    const tokens = normalise(field.text).map(stem);
+    for (let index = 0; index + 1 < tokens.length; index += 1) {
+      if (tokens[index] === first && tokens[index + 1] === second) return true;
+    }
+  }
+  return false;
 }
 
 function holds(value: number | null, bound: Bound | null): boolean {
@@ -1013,13 +1290,20 @@ function scoreGroup(file: ArchiveFile, group: Group, context: QueryContext): Sco
     textHit = true;
   }
 
+  const matchedWords: boolean[] = [];
   for (const word of group.words) {
+    let claimed = false;
     const text = textScore(word, fields);
     if (text.score > 0) {
       score += text.score;
       facets += 1;
       textHit = true;
+      claimed = true;
       match = text.match ?? match;
+      // A word found in the writing *about* the picture is worth naming: it is
+      // the difference between an answer and a guess, and it is the only way a
+      // result whose filename is IMG_4021.jpg can explain itself.
+      if (text.match === 'described' && !reasons.includes(word)) reasons.push(word);
     }
     for (const descriptor of DESCRIPTOR_INDEX.get(word) ?? []) {
       const confidence = descriptor.test(subject);
@@ -1027,7 +1311,26 @@ function scoreGroup(file: ArchiveFile, group: Group, context: QueryContext): Sco
       score += 2.4 * confidence;
       facets += 1;
       described = true;
+      claimed = true;
       if (!reasons.includes(descriptor.says)) reasons.push(descriptor.says);
+    }
+    matchedWords.push(claimed);
+  }
+
+  // Coverage is what orders a description query. Somebody who writes "red
+  // motorcycle in the rain" has described one photograph, and the file whose
+  // caption holds all three of those words is the answer — not the file that is
+  // merely dark and red. Summed on its own, one strong filename match outranks a
+  // picture that matches everything the user said, which is exactly backwards.
+  const matchedCount = matchedWords.filter(Boolean).length;
+  if (group.words.length > 1 && matchedCount > 0) {
+    score += 5 * (matchedCount / group.words.length);
+    // Two words that stand together in the writing are a phrase the user
+    // described — "rainy street", "red motorcycle" — and adjacency is evidence
+    // a bag of words throws away.
+    for (let index = 0; index + 1 < group.words.length; index += 1) {
+      if (!matchedWords[index] || !matchedWords[index + 1]) continue;
+      if (adjacent(group.words[index], group.words[index + 1], fields)) score += 1.2;
     }
   }
 

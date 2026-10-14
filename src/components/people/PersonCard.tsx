@@ -22,6 +22,8 @@ export function PersonCard({
   onRename,
   onForget,
   busy = false,
+  selecting = false,
+  selected = false,
 }: {
   person: Person;
   onOpen: () => void;
@@ -29,6 +31,9 @@ export function PersonCard({
   /** Delete the group. The caller confirms first — this just asks. */
   onForget?: () => void;
   busy?: boolean;
+  /** Selection mode: the whole card becomes the pick target. */
+  selecting?: boolean;
+  selected?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(person.label ?? '');
@@ -52,9 +57,13 @@ export function PersonCard({
 
   return (
     <article
+      aria-selected={selecting ? selected : undefined}
       className={cn(
-        'group relative flex flex-col items-center gap-3 rounded-card border border-line bg-surface px-3 py-5 text-center',
-        'transition-colors duration-150 hover:border-line-strong hover:bg-surface-2',
+        'group relative flex flex-col items-center gap-3 rounded-card border bg-surface px-3 py-5 text-center',
+        'transition-colors duration-150',
+        selected
+          ? 'border-accent bg-surface-2'
+          : 'border-line hover:border-line-strong hover:bg-surface-2',
         busy && 'opacity-60',
       )}
     >
@@ -90,7 +99,12 @@ export function PersonCard({
       ) : (
         <button
           type="button"
-          onClick={() => (person.label ? onOpen() : setEditing(true))}
+          onClick={() => {
+            // In selection mode the name is not an editing affordance — the
+            // card is a checkbox with a label on it.
+            if (selecting) return onOpen();
+            return person.label ? onOpen() : setEditing(true);
+          }}
           className={cn(
             'max-w-full truncate rounded-[4px] px-1 text-card',
             person.label
@@ -106,7 +120,12 @@ export function PersonCard({
         {formatCount(person.fileCount)} {person.fileCount === 1 ? 'photo' : 'photos'}
       </p>
 
-      {!editing && (
+      {/*
+        Renaming and deleting hide during selection. Both act on one group, and
+        a stray press while choosing five of them would be the wrong kind of
+        surprise — the merge is the only action selection offers.
+      */}
+      {!editing && !selecting && (
         <div className="absolute right-2 top-2 flex items-center gap-0.5 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
           {person.label && (
             <IconButton

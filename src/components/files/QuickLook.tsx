@@ -79,11 +79,17 @@ export function QuickLook() {
                 />
               </div>
             ) : (
-              <div className="max-h-[440px] max-w-full overflow-hidden rounded-thumb">
+              // The whole frame, in a stage of a fixed size. Sizing the box to
+              // the picture instead let a tall photograph push the caption off
+              // the bottom of the sheet, and a cover crop quietly hid the rest
+              // of it; `contain` letterboxes it against the sunken surface,
+              // which is what a viewer is for.
+              <div className="h-[420px] w-full overflow-hidden rounded-thumb">
                 <FileThumb
                   file={file}
                   fill
-                  className="max-h-[420px] w-auto"
+                  fit="contain"
+                  className="h-full w-full"
                   rounded="rounded-thumb"
                   eager
                 />

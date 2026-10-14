@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { getHost } from '@/services/host';
+import { getHost, isTauri } from '@/services/host';
 import { useArchiveStore } from '@/stores/archive';
 import { usePeopleStore } from '@/stores/people';
 import { useSettingsStore } from '@/stores/settings';
@@ -35,8 +35,41 @@ export function useHostBridge(): void {
         indexOnBattery: stored.indexOnBattery,
         llmEnabled: stored.llmEnabled,
         llmModel: stored.llmModel,
+        vlmEnabled: stored.vlmEnabled,
+        vlmModel: stored.vlmModel,
       })
       .catch(() => undefined);
+
+    // The models are fetched without being asked for.
+    //
+    // They are what makes the archive more than a file list — visual labels,
+    // descriptions and faces — and they are a two-hundred-megabyte download
+    // nobody would find behind a settings row. So once a session has settled
+    // (folders granted, queue empty) the missing bundles are fetched in the
+    // background, and the pipeline reopens the already-indexed files by itself
+    // when they land, so tags and people appear without another gesture. Once
+    // per session, and never in the browser build, which has no service to
+    // download into and says so instead of pretending.
+    let askedForModels = false;
+    const ensureModels = async () => {
+      if (askedForModels || !isTauri()) return;
+      if (useArchiveStore.getState().folders.length === 0) return;
+      const models = await host.modelStatus().catch(() => null);
+      if (!models?.available) return;
+      const wanted = models.bundles
+        .filter((bundle) => !bundle.ready)
+        .map((bundle) => bundle.name)
+        .filter((name) => name === 'vision' || name === 'text' || name === 'faces');
+      if (wanted.length === 0) return;
+      askedForModels = true;
+      useUIStore.getState().pushNotice({
+        level: 'info',
+        message: `Fetching the local models (${Math.round(
+          models.missingMegabytes,
+        )} MB) — tags, descriptions and faces come on when they arrive.`,
+      });
+      await host.installModels(wanted).catch(() => undefined);
+    };
 
     // A finished run is the one thing this application is worth interrupting
     // somebody for, so it is the only thing that raises a desktop notification.
@@ -89,6 +122,9 @@ export function useHostBridge(): void {
           useArchiveStore.setState({ index: status });
           if (status.state === 'idle' || status.state === 'error') {
             scheduleRefresh(400);
+            // The service has had time to answer by the time a queue drains,
+            // which is when the model store can be read honestly.
+            void ensureModels();
           }
           return;
         }
@@ -126,8 +162,13 @@ export function useHostBridge(): void {
     // read once the archive is open — not only when the People page is visited.
     void usePeopleStore.getState().load();
 
+    // And a session that opens on a settled archive (nothing was added, so no
+    // queue will ever drain) still gets its models.
+    const modelTimer = window.setTimeout(() => void ensureModels(), 3000);
+
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
+      window.clearTimeout(modelTimer);
       unsubscribe();
     };
   }, []);

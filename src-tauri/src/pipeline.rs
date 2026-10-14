@@ -402,6 +402,16 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
         "photo" | "screenshot" | "design" | "document" | "video"
     );
     if service_enabled && analysable {
+        // Descriptions ride along with the picture. `Some` is the user's own
+        // switch, read once here rather than per file: an empty string means
+        // "use the service's default vision model".
+        let vlm = state.vlm_enabled.load(Ordering::Relaxed).then(|| {
+            state
+                .vlm_model
+                .lock()
+                .map(|model| model.clone())
+                .unwrap_or_default()
+        });
         let described = service::describe(
             port,
             &job.path,
@@ -409,6 +419,7 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
             &job.file_id,
             text.as_deref(),
             still.as_deref(),
+            vlm.as_deref(),
         );
         let labels = described
             .as_ref()
@@ -424,22 +435,43 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
 
         {
             let conn = state.db()?;
-            db::save_generated(
-                &conn,
-                &job.file_id,
-                described.as_ref().and_then(|value| value.title.as_deref()),
-                described
-                    .as_ref()
-                    .and_then(|value| value.description.as_deref()),
-                &labels,
-                inferred.as_deref(),
-                &tags,
-            )?;
-            // The row is marked analysed even when every field above is empty:
-            // "looked at, nothing to say" is a result, and recording it is what
-            // stops a backfill from re-reading the same files forever.
-            db::set_analysis_state(&conn, &job.file_id, "analysed")?;
-            db::reindex_search_row(&conn, &job.file_id)?;
+            match described {
+                Some(answer) => {
+                    db::save_generated(
+                        &conn,
+                        &job.file_id,
+                        answer.title.as_deref(),
+                        answer.description.as_deref(),
+                        &labels,
+                        inferred.as_deref(),
+                        &tags,
+                    )?;
+                    db::set_description_engine(&conn, &job.file_id, answer.engine.as_deref())?;
+                    // `described` is the state that means "a vision model has
+                    // had its turn", and it is only set when one actually
+                    // answered. That distinction is what lets a later run find
+                    // the files that were looked at before descriptions were
+                    // switched on — without it, enabling them would do nothing
+                    // at all on an already-indexed library.
+                    let vision_turn = vlm.is_some()
+                        && answer
+                            .engine
+                            .as_deref()
+                            .is_some_and(|engine| engine.starts_with("ollama:"));
+                    db::set_analysis_state(
+                        &conn,
+                        &job.file_id,
+                        if vision_turn { "described" } else { "analysed" },
+                    )?;
+                    db::reindex_search_row(&conn, &job.file_id)?;
+                }
+                // A missing answer is the service being away, not a file with
+                // nothing to say. Nothing already stored is overwritten — a
+                // description written yesterday is still true today — and the
+                // row is marked failed instead, which counts attempts and lets
+                // the next pass pick it up again.
+                None => db::set_analysis_failed(&conn, &job.file_id)?,
+            }
         }
     }
 

@@ -192,6 +192,8 @@ export function createDevelopmentHost(): ArchiveHost {
     fileFaces: async (): Promise<FileFace[]> => [],
     renamePerson: () => refuse('Naming people'),
     mergePeople: () => refuse('Merging people'),
+    mergePeopleMany: () => refuse('Merging people'),
+    undoPeopleMerge: () => refuse('Undoing a merge'),
     setPersonHidden: () => refuse('Hiding people'),
     regroupPeople: () => refuse('Regrouping faces'),
     scanFaces: () => refuse('Looking for faces'),

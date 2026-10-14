@@ -52,6 +52,14 @@ pub struct AppState {
     /// Which local model should interpret a search query, when one is enabled.
     /// The service picks its own default when this is empty.
     pub llm_model: Mutex<String>,
+    /// Whether the analysis pipeline may ask a *vision* model to describe
+    /// photographs. Off until the user asks for it: it costs a model call per
+    /// image, and an archive of ten thousand photographs is ten thousand calls.
+    pub vlm_enabled: AtomicBool,
+    /// Which vision model does the looking. Empty means the service's own
+    /// default, which is what a machine with one preference for "the model"
+    /// should get without being asked twice.
+    pub vlm_model: Mutex<String>,
     /// Whether a change on disk is enough to start indexing by itself. Off means
     /// the watcher still notices — the interface still hears about new files —
     /// but the work waits until the user asks for it.
@@ -109,6 +117,8 @@ impl AppState {
             llm_enabled: AtomicBool::new(false),
             faces_enabled: AtomicBool::new(true),
             llm_model: Mutex::new(String::new()),
+            vlm_enabled: AtomicBool::new(false),
+            vlm_model: Mutex::new(String::new()),
             auto_index: AtomicBool::new(true),
             index_on_battery: AtomicBool::new(false),
             on_battery: AtomicBool::new(false),

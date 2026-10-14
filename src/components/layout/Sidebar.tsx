@@ -210,8 +210,17 @@ export function Sidebar() {
 
       <div className="my-3 h-px bg-line" />
 
-      {/* Collections */}
-      <div className={cn('flex items-center pb-1', collapsed ? 'justify-center' : 'px-3')}>
+      {/* Collections.
+
+          The header is a legend for the rows under it, so it is spaced to them
+          and not to the divider above: a heading that sits halfway between two
+          things belongs to neither. */}
+      <div
+        className={cn(
+          'flex items-center pb-1.5 pt-0.5',
+          collapsed ? 'justify-center' : 'px-3',
+        )}
+      >
         {!collapsed && (
           <span className="flex-1 text-2xs font-semibold uppercase tracking-[0.06em] text-ink-3">
             Collections
@@ -224,60 +233,72 @@ export function Sidebar() {
         </Tooltip>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-2">
-        {orderedCollections.length === 0 && !collapsed && !draftOpen && (
-          <p className="px-3 py-2 text-2xs leading-relaxed text-ink-3">
-            No collections yet. Group files by hand, or save a rule that keeps itself up to date.
-          </p>
-        )}
-        {orderedCollections.map((collection) => (
-          <Row
-            key={collection.id}
-            icon={collection.icon}
-            label={collection.name}
-            count={collection.fileCount}
-            collapsed={collapsed}
-            active={route === 'collections' && activeCollectionId === collection.id}
-            onClick={() => openCollection(collection.id)}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              setMenu({ x: event.clientX, y: event.clientY, collection });
-            }}
-            trailing={
-              collection.kind === 'smart' ? (
-                <Icon name="Layers" size={11} strokeWidth={1.9} className="text-ink-3/70" />
-              ) : undefined
-            }
-          />
-        ))}
+      {/* The list keeps its natural height and the slack lives *under* it.
 
-        {!collapsed && (
-          <div className="mt-1 px-1">
-            {draftOpen ? (
-              <input
-                ref={draftRef}
-                value={draftName}
-                onChange={(event) => setDraftName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void submitDraft();
-                  if (event.key === 'Escape') cancelDraft();
-                }}
-                onBlur={() => (draftName.trim() ? void submitDraft() : cancelDraft())}
-                placeholder="Collection name"
-                className="h-9 w-full rounded-[10px] border border-line-strong bg-surface px-3 text-body text-ink outline-none placeholder:text-ink-3"
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={beginDraft}
-                className="flex h-9 w-full items-center gap-2 rounded-[10px] px-3 text-meta text-ink-3 transition-colors duration-150 hover:bg-surface-3 hover:text-ink-2"
-              >
-                <Icon name="Plus" size={14} strokeWidth={2.2} />
-                New Collection
-              </button>
-            )}
-          </div>
-        )}
+          It used to be the flexible row, which is why an archive with no
+          collections showed one line of grey text at the top of a 240px well
+          and the only way to make one at the bottom of it: the space belonged
+          to the list, so the list stretched. A spring below the rows instead
+          keeps every row where it was put — the rows hug the header, "New
+          Collection" follows the last row, and the empty room collects above
+          the storage card where nothing is being read. */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-col gap-1 overflow-y-auto pb-1">
+          {orderedCollections.length === 0 && !collapsed && !draftOpen && (
+            <p className="px-3 pb-1 pt-0.5 text-2xs leading-relaxed text-ink-3">
+              No collections yet. Group files by hand, or save a rule that keeps itself up to date.
+            </p>
+          )}
+          {orderedCollections.map((collection) => (
+            <Row
+              key={collection.id}
+              icon={collection.icon}
+              label={collection.name}
+              count={collection.fileCount}
+              collapsed={collapsed}
+              active={route === 'collections' && activeCollectionId === collection.id}
+              onClick={() => openCollection(collection.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({ x: event.clientX, y: event.clientY, collection });
+              }}
+              trailing={
+                collection.kind === 'smart' ? (
+                  <Icon name="Layers" size={11} strokeWidth={1.9} className="text-ink-3/70" />
+                ) : undefined
+              }
+            />
+          ))}
+
+          {!collapsed && (
+            <div className="mt-1 px-1">
+              {draftOpen ? (
+                <input
+                  ref={draftRef}
+                  value={draftName}
+                  onChange={(event) => setDraftName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void submitDraft();
+                    if (event.key === 'Escape') cancelDraft();
+                  }}
+                  onBlur={() => (draftName.trim() ? void submitDraft() : cancelDraft())}
+                  placeholder="Collection name"
+                  className="h-9 w-full rounded-[10px] border border-line-strong bg-surface px-3 text-body text-ink outline-none placeholder:text-ink-3"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={beginDraft}
+                  className="flex h-9 w-full items-center gap-2 rounded-[10px] px-3 text-meta text-ink-3 transition-colors duration-150 hover:bg-surface-3 hover:text-ink-2"
+                >
+                  <Icon name="Plus" size={14} strokeWidth={2.2} />
+                  New Collection
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="min-h-3 flex-1" aria-hidden="true" />
       </div>
 
       {/* Storage — present, quiet, never the focus. */}

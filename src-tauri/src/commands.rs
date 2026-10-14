@@ -426,6 +426,19 @@ pub fn save_settings(state: SharedState<'_>, patch: serde_json::Value) -> AppRes
                 *slot = value.to_string();
             }
         }
+        // Image descriptions are a separate promise from query rewriting: they
+        // cost one model call *per photograph*, so the switch and the model
+        // behind it are stored apart from the text model above.
+        if let Some(value) = patch.get("vlmEnabled").and_then(|value| value.as_bool()) {
+            db::set_setting(&conn, "vlm_enabled", if value { "true" } else { "false" })?;
+            state.vlm_enabled.store(value, Ordering::Relaxed);
+        }
+        if let Some(value) = patch.get("vlmModel").and_then(|value| value.as_str()) {
+            db::set_setting(&conn, "vlm_model", value)?;
+            if let Ok(mut slot) = state.vlm_model.lock() {
+                *slot = value.to_string();
+            }
+        }
         // Whether a new file is enough to start indexing on its own. This used
         // to be wired to `localProcessing`, which turned the whole local
         // pipeline off — including the models — under the name of a switch
@@ -965,12 +978,25 @@ pub fn apply_settings(state: &Arc<AppState>) {
             db::get_setting(&conn, "semantic_search").ok().flatten(),
             db::get_setting(&conn, "llm_enabled").ok().flatten(),
             db::get_setting(&conn, "llm_model").ok().flatten(),
+            db::get_setting(&conn, "vlm_enabled").ok().flatten(),
+            db::get_setting(&conn, "vlm_model").ok().flatten(),
             db::get_setting(&conn, "auto_index").ok().flatten(),
             db::get_setting(&conn, "index_on_battery").ok().flatten(),
         )
     });
 
-    let Some((port, enabled, semantic, llm, llm_model, auto_index, on_battery)) = settings else {
+    let Some((
+        port,
+        enabled,
+        semantic,
+        llm,
+        llm_model,
+        vlm,
+        vlm_model,
+        auto_index,
+        on_battery,
+    )) = settings
+    else {
         return;
     };
     if let Some(port) = port.and_then(|value| value.parse::<u16>().ok()) {
@@ -987,6 +1013,14 @@ pub fn apply_settings(state: &Arc<AppState>) {
     }
     if let Some(model) = llm_model {
         if let Ok(mut slot) = state.llm_model.lock() {
+            *slot = model;
+        }
+    }
+    if let Some(vlm) = vlm {
+        state.vlm_enabled.store(vlm == "true", Ordering::Relaxed);
+    }
+    if let Some(model) = vlm_model {
+        if let Ok(mut slot) = state.vlm_model.lock() {
             *slot = model;
         }
     }
@@ -1077,6 +1111,37 @@ pub fn merge_people(state: SharedState<'_>, from_id: String, into_id: String) ->
     people::merge(&conn, &from_id, &into_id)
 }
 
+/// Fold several groups into one — "these are all the same person".
+///
+/// The interface asks for confirmation first and offers an undo afterwards;
+/// both live on the renderer side, because both are decisions about what the
+/// user just saw rather than about the index.
+#[tauri::command]
+pub fn merge_people_many(
+    state: SharedState<'_>,
+    from_ids: Vec<String>,
+    into_id: String,
+) -> AppResult<()> {
+    let conn = state.db()?;
+    people::merge_many(&conn, &from_ids, &into_id)
+}
+
+/// Take back the last merge, restoring the groups and their faces exactly.
+///
+/// Answers whether there was one to undo.
+#[tauri::command]
+pub fn undo_people_merge(state: SharedState<'_>) -> AppResult<bool> {
+    let conn = state.db()?;
+    people::undo_merge(&conn)
+}
+
+/// Whether an undo is on offer, so the interface can offer it without asking.
+#[tauri::command]
+pub fn can_undo_people_merge(state: SharedState<'_>) -> AppResult<bool> {
+    let conn = state.db()?;
+    people::can_undo_merge(&conn)
+}
+
 #[tauri::command]
 pub fn set_person_hidden(
     state: SharedState<'_>,
@@ -1147,6 +1212,77 @@ pub fn scan_faces(app: AppHandle, state: SharedState<'_>) -> AppResult<i64> {
     enqueue_face_jobs(&app, state.inner())
 }
 
+/// The generation of visual models this build knows how to use.
+///
+/// Its only job is to be a stamp: when it is written into the archive, the
+/// library has been reopened for these models and must not be reopened again.
+/// A new bundle is a new value, and reopens everything exactly once more.
+const VISION_EPOCH: &str = "clip-vit-b32-v1";
+
+/// Reopen the files that were analysed before the visual models were here.
+///
+/// Once per generation, and stamped, because a photograph whose labels come
+/// back empty on purpose — the model looked and did not know — would otherwise
+/// be re-read on every launch, forever, for nothing.
+fn reopen_for_vision(state: &Arc<AppState>) -> AppResult<usize> {
+    let conn = state.db()?;
+    if db::get_setting(&conn, "vision_epoch")?.as_deref() == Some(VISION_EPOCH) {
+        return Ok(0);
+    }
+    let count = db::requeue_for_models(&conn)?;
+    db::set_setting(&conn, "vision_epoch", VISION_EPOCH)?;
+    Ok(count)
+}
+
+/// True when the service reports the visual bundles on disk.
+fn visual_models_ready(port: u16) -> bool {
+    service::model_status(port)
+        .as_ref()
+        .and_then(|value| value.get("bundles"))
+        .and_then(|bundles| bundles.as_array())
+        .map(|entries| {
+            ["vision", "faces"].iter().all(|name| {
+                entries.iter().any(|entry| {
+                    entry.get("name").and_then(|value| value.as_str()) == Some(*name)
+                        && entry.get("ready").and_then(|value| value.as_bool()).unwrap_or(false)
+                })
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Look at the library again with models that arrived after it was indexed.
+///
+/// This is the case the interface cannot see: the user downloaded the models in
+/// a previous session — or fetched them by hand — and every file they own was
+/// already marked as analysed. Nothing revisits a file once it is indexed, so
+/// without this the models would sit on disk doing nothing at all.
+///
+/// It runs from the start-up thread that already waits for the service, so a
+/// machine with no models simply returns.
+pub fn reopen_library_for_vision(app: &AppHandle, state: &Arc<AppState>) {
+    if !state.service_enabled.load(Ordering::Relaxed) {
+        return;
+    }
+    let port = state.service_port.load(Ordering::Relaxed);
+    if !service::is_up(port) || !visual_models_ready(port) {
+        return;
+    }
+    match reopen_for_vision(state) {
+        Ok(0) => {}
+        Ok(count) => {
+            log::info!("models: {count} files reopened for the models that arrived since");
+            if let Err(error) = enqueue_analysis_jobs(app, state) {
+                log::warn!("could not queue the reopened files: {error}");
+            }
+            if let Err(error) = enqueue_face_jobs(app, state) {
+                log::warn!("could not queue the reopened photographs: {error}");
+            }
+        }
+        Err(error) => log::warn!("could not reopen the library for the models: {error}"),
+    }
+}
+
 fn enqueue_analysis_jobs(app: &AppHandle, state: &Arc<AppState>) -> AppResult<i64> {
     let jobs = {
         let conn = state.db()?;
@@ -1180,6 +1316,32 @@ pub fn analyze_library(app: AppHandle, state: SharedState<'_>) -> AppResult<i64>
         return Err(AppError::Other(
             "turn on local processing in settings first — tags come from the local models".into(),
         ));
+    }
+    // Two kinds of giving-up are undone here, because pressing this button is
+    // the user saying "I have changed something, try again": files whose last
+    // pass got no answer, and files the captioner described before descriptions
+    // were switched on. Neither is undone on its own — the first would loop,
+    // and the second would spend a model call per photograph without being asked.
+    {
+        let conn = state.db()?;
+        let retried = db::retry_failed_analysis(&conn)?;
+        // Pressing the button is also how somebody fixes an archive that was
+        // imported before the visual models existed: every row in it says
+        // "analysed" and none of them has anything the model wrote.
+        let reopened = db::requeue_for_models(&conn)?;
+        if reopened > 0 {
+            log::info!("analysis: {reopened} files reopened to be looked at again");
+        }
+        if state.vlm_enabled.load(Ordering::Relaxed) {
+            let queued = db::queue_undescribed(&conn)?;
+            if retried > 0 || queued > 0 {
+                log::info!(
+                    "descriptions: {queued} files to look at again, {retried} retries restored"
+                );
+            }
+        } else if retried > 0 {
+            log::info!("analysis: {retried} retries restored");
+        }
     }
     enqueue_analysis_jobs(&app, state.inner())
 }
@@ -1605,8 +1767,26 @@ pub fn install_models(
                     if ok {
                         let _ = app_handle.emit(
                             "archive://notice",
-                            "info|Models installed — looking for faces in what is already indexed",
+                            "info|Models installed — reading what is already indexed",
                         );
+                        // A library that was indexed before the models existed
+                        // is marked as analysed even though nothing ever looked
+                        // at it. Undoing that is what makes this download
+                        // visible: without it the files are "done", the pass
+                        // below finds nothing to do, and the archive looks
+                        // exactly as it did before. Only the visual bundles
+                        // change what an already-analysed file is missing.
+                        if analyse_after {
+                            match reopen_for_vision(&handle) {
+                                Ok(0) => {}
+                                Ok(count) => log::info!(
+                                    "analysis: {count} files reopened for the new models"
+                                ),
+                                Err(error) => log::warn!(
+                                    "could not reopen the library for the new models: {error}"
+                                ),
+                            }
+                        }
                         // The point of installing them is to use them, so the
                         // scan starts on its own rather than waiting to be asked.
                         match enqueue_face_jobs(&app_handle, &handle) {

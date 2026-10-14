@@ -110,6 +110,12 @@ pub fn run() {
                     } else {
                         state_handle.set_issue(None);
                     }
+                    // Models that were fetched in an earlier session leave the
+                    // library "analysed" with nothing the model wrote, and
+                    // nothing ever revisits an indexed file. This is where that
+                    // is undone: once per model generation, and only when the
+                    // service confirms the bundles are on disk.
+                    commands::reopen_library_for_vision(&app_handle, &state_handle);
                     pipeline::emit_status(&app_handle, &state_handle, "idle");
                 });
             }
@@ -202,6 +208,9 @@ pub fn run() {
             commands::rename_person,
             commands::forget_person,
             commands::merge_people,
+            commands::merge_people_many,
+            commands::undo_people_merge,
+            commands::can_undo_people_merge,
             commands::set_person_hidden,
             commands::regroup_people,
             commands::scan_faces,

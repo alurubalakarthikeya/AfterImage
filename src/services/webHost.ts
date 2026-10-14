@@ -1033,6 +1033,8 @@ export function createWebHost(): ArchiveHost {
     fileFaces: async (): Promise<FileFace[]> => [],
     renamePerson: () => refuse('Naming people'),
     mergePeople: () => refuse('Merging people'),
+    mergePeopleMany: () => refuse('Merging people'),
+    undoPeopleMerge: () => refuse('Undoing a merge'),
     setPersonHidden: () => refuse('Hiding people'),
     forgetPerson: () => refuse('Deleting a person'),
     regroupPeople: () => refuse('Regrouping faces'),

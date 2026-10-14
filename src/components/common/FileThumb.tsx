@@ -37,6 +37,7 @@ export function FileThumb({
   overlay,
   eager = false,
   fill = false,
+  fit = 'cover',
 }: {
   file: ArchiveFile;
   /** Override the natural ratio (used by the masonry grid). */
@@ -47,6 +48,17 @@ export function FileThumb({
   overlay?: ReactNode;
   eager?: boolean;
   fill?: boolean;
+  /**
+   * How the picture meets its box.
+   *
+   * `cover` crops it to fill the tile, which is what a grid of mixed sizes
+   * wants: every tile is the same shape and the eye reads the set. `contain`
+   * shows the whole frame, letterboxed against the panel behind it — the answer
+   * for anywhere the picture is being *looked at* rather than scanned past, an
+   * inspector and a lightbox, where a crop would hide the part of somebody's
+   * photograph they opened the panel to see.
+   */
+  fit?: 'cover' | 'contain';
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -69,7 +81,15 @@ export function FileThumb({
 
   return (
     <div
-      className={cn('relative overflow-hidden bg-surface-2', rounded, className)}
+      className={cn(
+        'relative overflow-hidden',
+        // A letterboxed picture is shown against whatever surface is hosting it
+        // — the inspector's sunken well — rather than against a grey panel of
+        // its own, which would put a second rectangle inside the first.
+        fit === 'contain' ? 'bg-transparent' : 'bg-surface-2',
+        rounded,
+        className,
+      )}
       style={ratio ? { aspectRatio: String(ratio) } : undefined}
     >
       <img
@@ -87,7 +107,8 @@ export function FileThumb({
           reportImage(false, `${file.name} → ${src.slice(0, 120)}`);
         }}
         className={cn(
-          'h-full w-full object-cover transition-opacity duration-300',
+          'h-full w-full transition-opacity duration-300',
+          fit === 'contain' ? 'object-contain' : 'object-cover',
           loaded ? 'opacity-100' : 'opacity-0',
         )}
       />

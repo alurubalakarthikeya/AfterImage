@@ -130,15 +130,77 @@ const video = file({ id: 'video', name: 'trip.mp4', kind: 'video', ext: 'mp4', b
 
 const files = [portrait, wide, screenshot, holiday, video];
 
+// ---------------------------------------------------------------------------
+// Pictures that have been described
+// ---------------------------------------------------------------------------
+//
+// The set above is measured, not written about: shapes, colours and dates. What
+// these four add is the other half — a caption and labels, which is what the
+// local vision model writes and what a person's sentence has to meet. The names
+// are deliberately meaningless, because that is the case the feature exists
+// for: a photograph called IMG_4021.jpg that the user can only ask for by
+// describing it.
+
+const motorbike = file({
+  id: 'motorbike',
+  name: 'IMG_4021.jpg',
+  width: 4032,
+  height: 3024,
+  bytes: 2_400_000,
+  createdAt: '2025-03-02T10:00:00Z',
+  description:
+    'A man wearing a black hoodie standing beside a red motorcycle on a rainy city street at night.',
+  labels: ['red motorcycle', 'black hoodie', 'rainy street', 'nighttime'],
+});
+const lounging = file({
+  id: 'lounging',
+  name: 'DSC_7788.jpg',
+  width: 4000,
+  height: 3000,
+  bytes: 1_800_000,
+  createdAt: '2025-06-11T10:00:00Z',
+  description: 'A dog sleeping on a grey sofa in a bright room.',
+  labels: ['dog', 'sofa', 'living room'],
+});
+const receipt = file({
+  id: 'receipt',
+  name: 'Screenshot 2025-08-14 at 09.15.02.png',
+  kind: 'screenshot',
+  ext: 'png',
+  width: 2560,
+  height: 1440,
+  bytes: 900_000,
+  createdAt: '2025-08-14T09:15:00Z',
+  description: 'A payment confirmation with the amount and the merchant name in bold.',
+  labels: ['receipt', 'payment'],
+  ocrText: 'Payment confirmed — 1,240.00 to Aravind Stores',
+});
+const carpet = file({
+  id: 'carpet',
+  name: 'red-carpet-awards-2025.jpg',
+  width: 1600,
+  height: 900,
+  bytes: 2_100_000,
+  createdAt: '2025-03-04T10:00:00Z',
+});
+
+const described = [motorbike, lounging, receipt, carpet];
+
 function run(query, options = {}) {
+  const pool = options.files ?? files;
   const criteria = buildCriteria(query, options.filters ?? {}, NOW);
   const results = [];
-  for (const f of files) {
+  for (const f of pool) {
     const scored = scoreFile(f, criteria, context);
     if (scored) results.push({ id: f.id, score: Math.round(scored.score * 100) / 100, match: scored.match, reasons: scored.reasons });
   }
   results.sort((a, b) => b.score - a.score);
   return { results, summary: summarise(criteria, results.length), described: describedReasons(results) };
+}
+
+/** The same query, read against the pictures that have captions. */
+function describe(query, options = {}) {
+  return run(query, { ...options, files: options.files ?? described });
 }
 
 const checks = [];
@@ -247,6 +309,62 @@ check('a trailing OR is not a second group', trailing.groups.length === 1);
 
 const summary = run('kind:screenshot #react').summary;
 check('the summary names what was understood', summary.includes('kind: screenshot') && summary.includes('tagged react'), summary);
+
+// ---------------------------------------------------------------------------
+// Describing a picture in words
+// ---------------------------------------------------------------------------
+
+// The sentence from the feature request, word for word. Every word of it except
+// three is grammar, the file is called IMG_4021.jpg, and it has to come back
+// first all the same.
+const standing = describe("the photo where I'm standing beside a red motorcycle");
+check('a sentence finds the picture it describes', standing.results[0]?.id === 'motorbike', JSON.stringify(standing.results));
+check('the words that found it are named', standing.described.includes('motorcycle') && standing.described.includes('red'), JSON.stringify(standing.described));
+check('a caption hit is labelled as described', standing.results[0]?.match === 'described', standing.results[0]?.match);
+
+const sentenceTerms = parseQuery("the photo where I'm standing beside a red motorcycle", NOW).all;
+check(
+  'filler never becomes a search term',
+  !['the', 'photo', 'where', 'i', 'm', 'beside'].some((word) => sentenceTerms.includes(word)),
+  JSON.stringify(sentenceTerms),
+);
+
+const dog = describe('a dog sleeping on the sofa');
+check('a description of a scene finds it', dog.results[0]?.id === 'lounging', JSON.stringify(dog.results));
+check('nothing else claims the dog', dog.results.length === 1, JSON.stringify(dog.results));
+
+// Plural against singular, and a word the author did not use: the caption says
+// `motorcycle` on a `rainy` street, the user says `bikes` and `wet`.
+const synonym = describe('bikes on a wet street');
+check('a different word for the same thing still matches', synonym.results[0]?.id === 'motorbike', JSON.stringify(synonym.results));
+
+const plural = describe('dogs on couches');
+check('plurals match captions written in the singular', plural.results[0]?.id === 'lounging', JSON.stringify(plural.results));
+
+// Coverage: `red` is in a filename here *and* in a caption there. The file that
+// holds every word the user said wins, which is the whole point of ranking by
+// how much of the description a picture accounts for.
+const coverage = describe('red motorcycle at night');
+check('the picture matching every word outranks one matching a single word', coverage.results[0]?.id === 'motorbike', JSON.stringify(coverage.results));
+check('a filename match is still offered, just below', coverage.results[1]?.id === 'carpet', JSON.stringify(coverage.results));
+
+const together = describe('rainy street');
+check('two words standing together in a caption are found', together.results[0]?.id === 'motorbike', JSON.stringify(together.results));
+
+const receiptQuery = describe('screenshots containing a payment confirmation');
+check('a screenshot is found by what is written on it', receiptQuery.results.some((r) => r.id === 'receipt'), JSON.stringify(receiptQuery.results));
+
+const nothing = describe('a helicopter above a glacier');
+check('a description nothing answers returns nothing', nothing.results.length === 0, JSON.stringify(nothing.results));
+
+// Plain-English dates, the way they are written in a sentence rather than in
+// the `since:` syntax.
+const lastWeek = parseQuery('photos from last week', NOW);
+check('a date phrase becomes a window', lastWeek.groups.some((group) => group.sinceDays === 7), JSON.stringify(lastWeek));
+check('and its words are not searched for', !lastWeek.all.includes('last') && !lastWeek.all.includes('week'), JSON.stringify(lastWeek.all));
+
+const yesterday = parseQuery('the dog from yesterday', NOW);
+check('yesterday is a window too', yesterday.groups[0]?.sinceDays === 2, JSON.stringify(yesterday));
 
 for (const entry of checks) {
   console.log(`${entry.pass ? 'PASS' : 'FAIL'}  ${entry.name}${entry.pass ? '' : `  → ${entry.detail}`}`);

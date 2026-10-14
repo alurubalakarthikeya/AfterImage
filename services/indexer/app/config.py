@@ -93,6 +93,11 @@ class Settings:
     # A label is only kept above this zero-shot probability, which is what
     # stops every screenshot from being tagged "photo".
     label_floor: float = 0.18
+    # ...and when nothing clears it, the best label is kept anyway if it leads
+    # the runner-up by this factor and is above this probability. Zero-shot
+    # scores over a few dozen prompts are small; the lead is the evidence.
+    label_lead: float = 1.35
+    relative_label_floor: float = 0.08
 
     # Vector index
     vector_backend: str = "auto"  # auto | sqlite-vec | faiss | numpy
@@ -103,6 +108,15 @@ class Settings:
     llm_model: str = "llama3.2:3b"
     ollama_url: str = "http://127.0.0.1:11434"
     llm_timeout_seconds: float = 20.0
+    # Descriptions from a *vision* model. Separate from `llm_enabled` because
+    # the two do different work: that switch rewrites a search query, this one
+    # writes the sentence a photograph is searched by. Both are local, and both
+    # are off until the user asks for them.
+    vlm_enabled: bool = False
+    # Vision-capable models are a different pull from the text ones, so the
+    # default is a model that accepts images rather than the text model above.
+    vlm_model: str = "llava:7b"
+    vlm_timeout_seconds: float = 90.0
 
     # Guard rails
     max_image_side: int = 2400
@@ -144,6 +158,8 @@ def get_settings() -> Settings:
             "AFTERIMAGE_CAPTION_MODEL", "Salesforce/blip-image-captioning-base"
         ),
         label_floor=_float("AFTERIMAGE_LABEL_FLOOR", 0.18),
+        label_lead=_float("AFTERIMAGE_LABEL_LEAD", 1.35),
+        relative_label_floor=_float("AFTERIMAGE_RELATIVE_LABEL_FLOOR", 0.08),
         text_model=os.environ.get(
             "AFTERIMAGE_TEXT_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
         ),
@@ -153,6 +169,8 @@ def get_settings() -> Settings:
         llm_enabled=_bool("AFTERIMAGE_LLM", False),
         llm_model=os.environ.get("AFTERIMAGE_LLM_MODEL", "llama3.2:3b"),
         ollama_url=os.environ.get("AFTERIMAGE_OLLAMA_URL", "http://127.0.0.1:11434"),
+        vlm_enabled=_bool("AFTERIMAGE_VLM", False),
+        vlm_model=os.environ.get("AFTERIMAGE_VLM_MODEL", "llava:7b"),
         log_level=os.environ.get("AFTERIMAGE_LOG_LEVEL", "info"),
     )
     settings.ensure_dirs()

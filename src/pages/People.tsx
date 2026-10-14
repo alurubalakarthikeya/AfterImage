@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Person } from '@/types';
 import { usePeopleStore } from '@/stores/people';
 import { useUIStore } from '@/stores/ui';
@@ -10,7 +10,9 @@ import { Card } from '@/components/common/Card';
 import { EmptyState } from '@/components/common/EmptyState';
 import { Icon } from '@/components/common/Icon';
 import { Modal } from '@/components/common/Overlay';
+import { AssetImage } from '@/components/common/AssetImage';
 import { PeopleSkeleton, PeopleViews } from '@/components/people/PeopleViews';
+import { NameReview, NameReviewPrompt } from '@/components/people/NameReview';
 
 /**
  * People.
@@ -36,11 +38,23 @@ export function People() {
   const regroup = usePeopleStore((state) => state.regroup);
   const rename = usePeopleStore((state) => state.rename);
   const forget = usePeopleStore((state) => state.forget);
+  const mergeMany = usePeopleStore((state) => state.mergeMany);
   const openPerson = useUIStore((state) => state.openPerson);
 
   // Deleting a group is irreversible in a way the other actions on this page
   // are not, so it is the one thing here that asks first.
   const [target, setTarget] = useState<Person | null>(null);
+
+  // Merging asks first too — but for a different reason: several groups fold
+  // into one in a single step, and which one survives decides whose name the
+  // photographs end up under.
+  const [selecting, setSelecting] = useState(false);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [confirmMerge, setConfirmMerge] = useState(false);
+
+  // The review that follows a face pass: name them now, skip one, or dismiss
+  // the whole thing. It never blocks the page — it sits above the grid.
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   useEffect(() => {
     void load();
@@ -57,9 +71,34 @@ export function People() {
     .filter(Boolean)
     .join(' · ');
 
+  // Whose name survives the merge: the first selected group that already has
+  // one, because a name the user typed is worth more than a position in a
+  // list — and when none has a name, the first pick, which is the one they
+  // pointed at first.
+  const mergeSurvivor = useMemo(() => {
+    const picked = chosen
+      .map((id) => people.find((person) => person.id === id))
+      .filter((person): person is Person => Boolean(person));
+    return picked.find((person) => person.label) ?? picked[0] ?? null;
+  }, [chosen, people]);
+
   return (
     <Page>
       <PageHeader title="People" subtitle={subtitle} icon="Users">
+        {available && people.length > 0 && (
+          <Button
+            variant={selecting ? 'primary' : 'secondary'}
+            size="sm"
+            icon={selecting ? 'X' : 'ListChecks'}
+            disabled={busy}
+            onClick={() => {
+              setSelecting(!selecting);
+              setChosen([]);
+            }}
+          >
+            {selecting ? 'Done' : 'Select'}
+          </Button>
+        )}
         {available && stats.faces > 0 && (
           <>
             <Button
@@ -136,18 +175,57 @@ export function People() {
         />
       ) : (
         <>
+          {available && stats.unnamed > 0 && !selecting && (
+            <NameReviewPrompt people={people} onOpen={() => setReviewOpen(true)} />
+          )}
+
           <PeopleViews
             people={people}
             busy={busy}
+            selecting={selecting}
+            selected={chosen}
             onOpen={openPerson}
             onRename={(personId, label) => void rename(personId, label)}
             onForget={setTarget}
+            onToggle={(personId) =>
+              setChosen((current) =>
+                current.includes(personId)
+                  ? current.filter((id) => id !== personId)
+                  : [...current, personId],
+              )
+            }
           />
-          <p className="px-1 text-2xs text-ink-3">
-            {formatCount(stats.people)} {stats.people === 1 ? 'person' : 'people'} from{' '}
-            {formatCount(stats.faces)} {stats.faces === 1 ? 'face' : 'faces'} in{' '}
-            {formatCount(stats.photos)} photographs. Names are stored in your archive, not online.
-          </p>
+
+          {selecting ? (
+            <div className="sticky bottom-2 z-20 flex flex-wrap items-center gap-3 rounded-card border border-line bg-surface px-4 py-3 shadow-soft">
+              <span className="text-meta text-ink-2">
+                {chosen.length === 0
+                  ? 'Pick two or more groups that are the same person.'
+                  : `${formatCount(chosen.length)} selected`}
+              </span>
+              <span className="flex-1" />
+              {chosen.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={() => setChosen([])}>
+                  Clear
+                </Button>
+              )}
+              <Button
+                variant="primary"
+                size="sm"
+                icon="Combine"
+                disabled={busy || chosen.length < 2}
+                onClick={() => setConfirmMerge(true)}
+              >
+                Merge {chosen.length >= 2 ? formatCount(chosen.length) : ''} groups
+              </Button>
+            </div>
+          ) : (
+            <p className="px-1 text-2xs text-ink-3">
+              {formatCount(stats.people)} {stats.people === 1 ? 'person' : 'people'} from{' '}
+              {formatCount(stats.faces)} {stats.faces === 1 ? 'face' : 'faces'} in{' '}
+              {formatCount(stats.photos)} photographs. Names are stored in your archive, not online.
+            </p>
+          )}
         </>
       )}
 
@@ -190,6 +268,82 @@ export function People() {
           </div>
         </div>
       </Modal>
+
+      {/*
+        The merge, confirmed before anything moves.
+
+        Two questions are answered here: which group survives (its name is the
+        one that carries), and that this is what the user meant — several faces
+        look alike, and folding them together is invisible afterwards without an
+        undo, which the notice after the merge provides.
+      */}
+      <Modal
+        open={confirmMerge}
+        onClose={() => setConfirmMerge(false)}
+        className="max-w-[460px]"
+      >
+        <div className="p-5">
+          <h2 className="text-section font-semibold text-ink">
+            Merge {formatCount(chosen.length)} groups into one?
+          </h2>
+          <p className="mt-2 text-meta leading-relaxed text-ink-2">
+            Every photograph in these groups ends up under one name, and searching for that name
+            finds all of them. Nothing on disk is moved, renamed or deleted.
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {chosen
+              .map((id) => people.find((person) => person.id === id))
+              .filter((person): person is Person => Boolean(person))
+              .map((person) => (
+                <span
+                  key={person.id}
+                  className="inline-flex items-center gap-2 rounded-pill border border-line bg-surface-2 py-1 pl-1 pr-2.5"
+                >
+                  <span className="block h-6 w-6 overflow-hidden rounded-full border border-line bg-surface-2">
+                    <AssetImage path={person.coverPath} alt="" fallbackIcon="User" />
+                  </span>
+                  <span className="text-2xs text-ink-2">{person.label ?? 'Unnamed group'}</span>
+                </span>
+              ))}
+          </div>
+
+          <p className="mt-3 text-2xs leading-relaxed text-ink-3">
+            The groups you picked are folded into{' '}
+            <span className="font-medium text-ink-2">{mergeSurvivor?.label ?? 'the first group'}</span>
+            {mergeSurvivor?.label ? ', which keeps its name' : ''}. You can undo this straight
+            afterwards from the notice at the bottom of the screen.
+          </p>
+
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setConfirmMerge(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon="Combine"
+              disabled={busy || !mergeSurvivor}
+              onClick={() => {
+                const survivor = mergeSurvivor;
+                setConfirmMerge(false);
+                setSelecting(false);
+                const ids = chosen;
+                setChosen([]);
+                if (survivor) void mergeMany(ids, survivor.id);
+              }}
+            >
+              Merge them
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <NameReview
+        open={reviewOpen}
+        people={people}
+        onClose={() => setReviewOpen(false)}
+      />
     </Page>
   );
 }

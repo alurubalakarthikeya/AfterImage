@@ -41,6 +41,20 @@ class IndexRequest(BaseModel):
             "service decode the file a second time."
         ),
     )
+    vlm_enabled: bool | None = Field(
+        default=None,
+        alias="vlmEnabled",
+        description=(
+            "Ask the local vision-language model for a description. The desktop "
+            "shell only sends true when the user turned descriptions on, so the "
+            "service does not need its own switch to honour the choice."
+        ),
+    )
+    vlm_model: str | None = Field(
+        default=None,
+        alias="vlmModel",
+        description="Which vision model to ask, when the shell chose one.",
+    )
 
 
 class OcrBlock(BaseModel):

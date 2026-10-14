@@ -37,6 +37,8 @@ function persistable(state: SettingsState) {
     semanticSearch: state.semanticSearch,
     llmEnabled: state.llmEnabled,
     llmModel: state.llmModel,
+    vlmEnabled: state.vlmEnabled,
+    vlmModel: state.vlmModel,
     servicePort: state.servicePort,
     userName: state.userName,
     accountLabel: state.accountLabel,
@@ -96,8 +98,11 @@ const cookieBackedStorage: PersistStorage<PersistedSettings> = {
  * User preferences. Persisted locally, never synced anywhere.
  *
  * Defaults are chosen so a first launch looks like the thing in the spec:
- * light appearance, comfortable density, semantic search off until the user
- * opts into the local model.
+ * light appearance, comfortable density. Semantic search is on from the start:
+ * it is what makes a picture findable by describing it, the models it needs are
+ * fetched on their own, and a machine that never gets them simply indexes no
+ * vectors — the switch is there for somebody who wants the pipeline to do less,
+ * not as a gate in front of the feature.
  */
 export interface SettingsState {
   appearance: Appearance;
@@ -125,6 +130,10 @@ export interface SettingsState {
   semanticSearch: boolean;
   llmEnabled: boolean;
   llmModel: string;
+  /** Whether a local vision model may describe the photographs. */
+  vlmEnabled: boolean;
+  /** Which vision model does the looking. */
+  vlmModel: string;
   servicePort: number;
   userName: string;
   accountLabel: string;
@@ -157,6 +166,8 @@ export interface SettingsState {
   setSemanticSearch: (value: boolean) => void;
   setLlmEnabled: (value: boolean) => void;
   setLlmModel: (value: string) => void;
+  setVlmEnabled: (value: boolean) => void;
+  setVlmModel: (value: string) => void;
   setServicePort: (value: number) => void;
   setUserName: (value: string) => void;
   setUseCases: (value: string[]) => void;
@@ -179,9 +190,14 @@ export const useSettingsStore = create<SettingsState>()(
       autoIndex: true,
       indexOnBattery: false,
       notifications: true,
-      semanticSearch: false,
+      semanticSearch: true,
       llmEnabled: false,
       llmModel: 'llama3.2:3b',
+      // Off by default on purpose: a description pass is one model call per
+      // photograph, and an archive of ten thousand is ten thousand calls of
+      // somebody's battery.
+      vlmEnabled: false,
+      vlmModel: 'llava:7b',
       servicePort: 8765,
       // Filled in from the operating system's own account name on first launch
       // (see `useLocalIdentity`). Empty means "ask the machine", never a name
@@ -239,6 +255,18 @@ export const useSettingsStore = create<SettingsState>()(
           .updatePreferences({ llmModel })
           .catch(() => undefined);
       },
+      setVlmEnabled: (vlmEnabled) => {
+        set({ vlmEnabled });
+        void getHost()
+          .updatePreferences({ vlmEnabled })
+          .catch(() => undefined);
+      },
+      setVlmModel: (vlmModel) => {
+        set({ vlmModel });
+        void getHost()
+          .updatePreferences({ vlmModel })
+          .catch(() => undefined);
+      },
       setServicePort: (servicePort) => {
         set({ servicePort });
         void getHost()
@@ -253,9 +281,24 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'afterimage.settings.v1',
-      version: 1,
+      version: 2,
       storage: cookieBackedStorage,
       partialize: persistable,
+      /**
+       * v2 turns semantic search on for settings that predate it.
+       *
+       * v1 shipped the switch off, so a stored `false` is not evidence that
+       * anybody chose it — it is the old default, copied into the archive's own
+       * database by the first session that ran. Describing a photograph and
+       * finding it again is the point of the feature and it cannot work without
+       * the embeddings, so the default moved. It is still a real switch: turn
+       * it off after this and the choice sticks.
+       */
+      migrate: (persisted, version) => {
+        const state = persisted as Partial<SettingsState>;
+        if (version < 2) state.semanticSearch = true;
+        return state as SettingsState;
+      },
     },
   ),
 );

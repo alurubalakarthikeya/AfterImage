@@ -49,11 +49,18 @@ export function FilePreview({
       style={{ backgroundColor: 'var(--af-surface-sunken)', height }}
     >
       {hasImage ? (
-        <div className="flex h-full w-full items-center justify-center p-2">
+        // `fit="contain"` and a full-size box: the picture is never cropped
+        // here. The inspector is where somebody looks at one file closely, and
+        // a cover crop on a portrait photograph cuts off exactly the part they
+        // opened the panel to see — while the uneven insets it produced (flush
+        // to the sides, eight pixels top and bottom) are what made this
+        // container read as mis-padded.
+        <div className="flex h-full w-full items-center justify-center p-2.5">
           <FileThumb
             file={file}
             fill
-            className="h-full w-auto max-w-full overflow-hidden rounded-[10px]"
+            fit="contain"
+            className="h-full w-full overflow-hidden rounded-[10px]"
             rounded="rounded-[10px]"
           />
         </div>

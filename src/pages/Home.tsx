@@ -31,6 +31,7 @@ export function Home() {
         <SmartCollections />
         <ActivityTimeline limit={7} />
       </div>
+
     </Page>
   );
 }

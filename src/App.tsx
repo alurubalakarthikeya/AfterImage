@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { dismissSplash, report } from '@/boot';
+import { Landing } from '@/pages/Landing';
 import { useAppearance } from '@/hooks/useAppearance';
 import { useDropImport } from '@/hooks/useDropImport';
 import { useHostBridge } from '@/hooks/useHostBridge';
@@ -112,10 +113,39 @@ function LoadFailure({ message }: { message: string }) {
 /**
  * Application root.
  *
+ * Two programs behind one bundle, decided once, at the top. In a browser the
+ * page is the download: the archive needs a process that can read folders, keep
+ * a database and run the models, and a web page has none of those — so the page
+ * offers the program that does rather than imitating the parts it can reach.
+ * Inside the installed application it is the archive, and nothing here is ever
+ * rendered there.
+ */
+export default function App() {
+  // The splash is markup in `index.html`, so it covers the page until React has
+  // painted — on both routes. Dismissing it only in the archive left the
+  // download page sitting underneath the loading mark for good.
+  useEffect(() => {
+    dismissSplash();
+  }, []);
+
+  if (!isTauri()) {
+    return (
+      <>
+        <Landing />
+        <NoticeHost />
+      </>
+    );
+  }
+  return <Archive />;
+}
+
+/**
+ * The archive.
+ *
  * Global behaviour only: appearance, host events, drag-and-drop, shortcuts and
  * the overlays that must exist exactly once. Everything else lives in the shell.
  */
-export default function App() {
+function Archive() {
   useAppearance();
   useHostBridge();
   useDropImport();
@@ -138,13 +168,6 @@ export default function App() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  // React has painted, so the markup splash has nothing left to cover. It is
-  // dismissed here rather than on the archive becoming ready: keeping it up for
-  // the length of a scan would hide the one screen that reports a stalled one.
-  useEffect(() => {
-    dismissSplash();
-  }, []);
 
   // One line in the application log for the moment the archive is usable. It is
   // the difference between "the window opened" and "the window works", which is

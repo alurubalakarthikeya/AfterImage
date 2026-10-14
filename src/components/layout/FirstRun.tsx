@@ -124,6 +124,7 @@ export function FirstRun() {
           Reading happens locally. Indexing, thumbnails and text extraction never leave this
           machine.
         </p>
+
       </div>
     </div>
   );

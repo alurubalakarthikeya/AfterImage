@@ -35,6 +35,13 @@ pub const STATE_FAILED: &str = "failed";
 pub const STATE_UNSUPPORTED: &str = "unsupported";
 pub const STATE_MISSING: &str = "missing";
 
+/// How many unanswered analysis passes a file gets before it is left alone.
+///
+/// Three is picked so a service that was down for one run, then came back and
+/// failed once, is not written off — while a file that cannot be described
+/// stops costing a round trip on every subsequent scan.
+const MAX_ANALYSIS_ATTEMPTS: i64 = 3;
+
 /// The projection every file query uses, so `row_to_file` always lines up.
 const FILE_COLUMNS: &str = "f.id, f.name, f.path, f.kind, f.ext, f.mime, f.bytes, f.width, \
      f.height, f.duration_sec, f.pages, f.folder_id, f.folder_path, f.created_at, f.modified_at, \
@@ -358,6 +365,19 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
     // and conflating the two would either re-run the work forever or skip files
     // that were never analysed at all. This is the flag a backfill pass reads.
     ensure_column(conn, "files", "analysis_state", "TEXT NOT NULL DEFAULT 'none'")?;
+    // Which model wrote the description, when a model wrote one at all.
+    //
+    // This is the difference between "looked at with no vision model installed"
+    // and "the vision model has had its turn": without it, switching
+    // descriptions on later would find every file already marked done and
+    // quietly do nothing, and the only way to tell would be to re-run the whole
+    // library and hope. `engine` is the service's own string, e.g.
+    // `ollama:llava:7b`.
+    ensure_column(conn, "files", "description_engine", "TEXT")?;
+    // How many times a job has come back without an answer. A service that was
+    // down must not be retried forever, and a file that was never looked at
+    // must not be written off after one unlucky attempt.
+    ensure_column(conn, "files", "analysis_attempts", "INTEGER NOT NULL DEFAULT 0")?;
 
     Ok(())
 }
@@ -678,6 +698,98 @@ pub fn set_analysis_state(conn: &Connection, file_id: &str, state: &str) -> AppR
     Ok(())
 }
 
+/// The models were asked and could not answer — the service was away, or the
+/// answer did not parse.
+///
+/// Failed is a *retryable* state, not a verdict: the attempt counter climbs,
+/// and [`files_needing_analysis`] stops picking the file up once it has had
+/// `MAX_ANALYSIS_ATTEMPTS` goes. That is what keeps a stopped service from
+/// either burying a file as done or spinning on it forever.
+/// Which model produced the description now stored against this file.
+///
+/// Stored because it is the only reliable way to answer "has the vision model
+/// looked at this one yet?" without re-asking it, and because a description
+/// written by a different model is a different kind of answer: it should be
+/// refreshed when the model changes, not treated as current forever.
+pub fn set_description_engine(conn: &Connection, file_id: &str, engine: Option<&str>) -> AppResult<()> {
+    conn.execute(
+        "UPDATE files SET description_engine = ?2 WHERE id = ?1",
+        params![file_id, engine],
+    )?;
+    Ok(())
+}
+
+pub fn set_analysis_failed(conn: &Connection, file_id: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE files SET analysis_attempts = analysis_attempts + 1,
+                         analysis_state = 'failed'
+         WHERE id = ?1",
+        params![file_id],
+    )?;
+    Ok(())
+}
+
+/// Give the failed files their attempts back.
+///
+/// Called when the user asks for a pass by hand: they have just changed
+/// something — started the service, installed a model — which is exactly the
+/// condition the attempts were protecting against.
+pub fn retry_failed_analysis(conn: &Connection) -> AppResult<usize> {
+    Ok(conn.execute(
+        "UPDATE files SET analysis_attempts = 0, analysis_state = 'none'
+         WHERE analysis_state = 'failed'",
+        [],
+    )?)
+}
+
+/// Put files that have never had a vision model's attention back on the list.
+///
+/// Only ever called because the user pressed the button: descriptions cost one
+/// model call per photograph, so the pipeline must never decide on its own to
+/// spend them. A file qualifies when it is done (`analysed`) but the description
+/// it carries did not come from a vision model — either it has none, or it was
+/// written by the captioner before descriptions were switched on.
+pub fn queue_undescribed(conn: &Connection) -> AppResult<usize> {
+    Ok(conn.execute(
+        "UPDATE files SET analysis_state = 'none'
+         WHERE analysis_state = 'analysed'
+           AND index_state = 'indexed'
+           AND kind IN ('photo', 'screenshot', 'design', 'document', 'video')
+           AND (description_engine IS NULL OR description_engine NOT LIKE 'ollama:%')",
+        [],
+    )?)
+}
+
+/// Put every file the models have not actually looked at back on the list.
+///
+/// This is what runs when the model bundles arrive, and it is the difference
+/// between installing them and installing them doing nothing. `analysed` is a
+/// statement about the pipeline, not about the file: a library imported on a
+/// machine with no vision models is full of photographs marked analysed whose
+/// `labels` column holds `[]` and whose embedding state says `none`. Nothing
+/// revisits a file once it is indexed, so those rows would stay empty forever —
+/// the user would install 150 MB of models and watch the archive look exactly
+/// the way it did before.
+///
+/// It is only ever called because a bundle just finished downloading, never on
+/// a timer: re-running a pass over a library whose models are still missing
+/// would spend the work and learn nothing.
+pub fn requeue_for_models(conn: &Connection) -> AppResult<usize> {
+    Ok(conn.execute(
+        "UPDATE files SET analysis_state = 'none', analysis_attempts = 0,
+                          embedding_state = 'none'
+         WHERE index_state = 'indexed'
+           AND kind IN ('photo', 'screenshot', 'design', 'video', 'document')
+           AND (
+             (analysis_state IN ('analysed', 'described')
+              AND (labels IS NULL OR TRIM(labels) = '' OR labels = '[]'))
+             OR embedding_state IS NULL
+             OR embedding_state <> 'indexed'
+           )",
+        [],
+    )?)
+}
+
 /// Files the models have not looked at yet, oldest first.
 ///
 /// The oldest first matters: a backfill over a large library should reach the
@@ -685,25 +797,30 @@ pub fn set_analysis_state(conn: &Connection, file_id: &str, state: &str) -> AppR
 /// thousand, and the order also means an interrupted pass resumes where it
 /// stopped.
 pub fn files_needing_analysis(conn: &Connection, limit: i64) -> AppResult<Vec<(String, String, String)>> {
-    // Two reasons to look at a file, and the second one is not about models at
-    // all. A file whose 
-    // preview is missing needs the pipeline to run for the picture alone: this
-    // is how a library indexed before video and document stills existed gets
-    // them, without anybody re-importing anything. Without this clause those
-    // files are 'analysed' or 'none' and permanently invisible in the grid —
-    // a video tile with no frame and a PDF tile with no page.
+    // Three reasons to look at a file.
+    //
+    // The middle one is about failures rather than work: a file whose last pass
+    // got no answer comes back until it has run out of attempts.
+    //
+    // The last one is not about models at all. A file whose preview is missing
+    // needs the pipeline to run for the picture alone: this is how a library
+    // indexed before video and document stills existed gets them, without
+    // anybody re-importing anything. Without this clause those files are
+    // 'analysed' or 'none' and permanently invisible in the grid — a video tile
+    // with no frame and a PDF tile with no page.
     let mut statement = conn.prepare(
         "SELECT id, path, kind FROM files
          WHERE index_state = 'indexed'
            AND (
-             analysis_state != 'analysed'
+             analysis_state NOT IN ('analysed', 'described')
+             OR (analysis_state = 'failed' AND analysis_attempts < ?2)
              OR (preview_path IS NULL
                  AND kind IN ('photo', 'screenshot', 'video', 'document', 'design'))
            )
          ORDER BY created_at ASC
          LIMIT ?1",
     )?;
-    let rows = statement.query_map(params![limit], |row| {
+    let rows = statement.query_map(params![limit, MAX_ANALYSIS_ATTEMPTS], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -718,10 +835,11 @@ pub fn analysis_progress(conn: &Connection) -> AppResult<(i64, i64)> {
     let remaining: i64 = conn.query_row(
         "SELECT COUNT(*) FROM files
          WHERE index_state = 'indexed'
-           AND (analysis_state != 'analysed'
+           AND (analysis_state NOT IN ('analysed', 'described')
+                OR (analysis_state = 'failed' AND analysis_attempts < ?1)
                 OR (preview_path IS NULL
                     AND kind IN ('photo', 'screenshot', 'video', 'document', 'design')))",
-        [],
+        params![MAX_ANALYSIS_ATTEMPTS],
         |row| row.get(0),
     )?;
     let total: i64 = conn.query_row(

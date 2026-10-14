@@ -3,6 +3,7 @@ import type { SearchHit } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useSearchStore } from '@/stores/search';
 import { useUIStore } from '@/stores/ui';
+import { isTauri } from '@/services/host';
 import { KIND_SINGULAR } from '@/stores/selectors';
 import { highlight } from '@/utils/highlight';
 import { cn, formatBytes, formatRelativeTime, formatResolution, splitExtension } from '@/utils/format';
@@ -97,6 +98,17 @@ export function SearchResults({ onOpen }: { onOpen?: (fileId: string) => void })
     return <SkeletonRows rows={6} className="px-1 py-2" />;
   }
 
+  /**
+   * A sentence, rather than a word.
+   *
+   * Two content words with nothing to show for them is the shape of somebody
+   * describing a photograph — the terms here are already stripped of filler, so
+   * `the photo of me at the beach` arrives as two words. When that comes back
+   * empty, "try fewer words" is the wrong advice: the words were fine, the
+   * picture has simply not been read yet.
+   */
+  const describing = terms.length >= 2;
+
   if (hits.length === 0) {
     return (
       <EmptyState
@@ -106,9 +118,13 @@ export function SearchResults({ onOpen }: { onOpen?: (fileId: string) => void })
           folderCount === 0
             ? 'Nothing is indexed yet. Add a folder and AfterImage will read it in the background.'
             : submitted
-              ? semanticAvailable
-                ? 'Try a tag, a file type, or a looser phrase — full text and meaning are both searched.'
-                : 'Try fewer words, a tag or a file type — or describe the picture instead: “dark wide screenshot”, “tall blurry photo”.'
+              ? describing && !semanticAvailable
+                ? isTauri()
+                  ? 'If you are describing what is in a photograph, the picture has to be read before it can be found: Settings → Indexing and search → Visual models, then Describe the library. Everything happens on this machine.'
+                  : 'Describing what is inside a photograph needs the local vision models, which the browser build cannot run — the installed app reads every picture on your machine and searches its description.'
+                : semanticAvailable
+                  ? 'Try a tag, a file type, or a looser phrase — full text and meaning are both searched.'
+                  : 'Try fewer words, a tag or a file type — or describe the picture instead: “dark wide screenshot”, “tall blurry photo”.'
               : 'Search filenames, extracted text, tags, folders, collections and projects — all on this machine.'
         }
       />

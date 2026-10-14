@@ -34,6 +34,10 @@ export interface PeopleStoreState {
   refresh: () => Promise<void>;
   rename: (personId: string, label: string) => Promise<void>;
   merge: (fromId: string, intoId: string) => Promise<void>;
+  /** Fold a whole selection into one group, in one operation. */
+  mergeMany: (fromIds: string[], intoId: string) => Promise<void>;
+  /** Take back the last merge. Answers whether there was one. */
+  undoMerge: () => Promise<boolean>;
   hide: (personId: string) => Promise<void>;
   forget: (personId: string) => Promise<void>;
   regroup: () => Promise<void>;
@@ -135,6 +139,49 @@ export const usePeopleStore = create<PeopleStoreState>()((set, get) => {
         if (ui.activePersonId === fromId) ui.openPerson(intoId);
       } catch (error) {
         notice('error', errorMessage(error));
+      } finally {
+        set({ busy: false });
+      }
+    },
+
+    async mergeMany(fromIds, intoId) {
+      set({ busy: true });
+      try {
+        await getHost().mergePeopleMany(fromIds, intoId);
+        const survivor = get().people.find((item) => item.id === intoId);
+        await get().refresh();
+        // The action is the whole reason a merge is safe to offer: the notice
+        // carries the way back for as long as it is on screen, and the record
+        // behind it lives in the archive rather than in this component.
+        useUIStore.getState().pushNotice({
+          level: 'success',
+          message: `Merged ${fromIds.length} groups into ${survivor?.label ?? 'one group'}`,
+          action: {
+            label: 'Undo',
+            run: () => void get().undoMerge(),
+          },
+        });
+      } catch (error) {
+        notice('error', errorMessage(error));
+      } finally {
+        set({ busy: false });
+      }
+    },
+
+    async undoMerge() {
+      set({ busy: true });
+      try {
+        const undone = await getHost().undoPeopleMerge();
+        if (!undone) {
+          notice('info', 'There was no merge to undo');
+          return false;
+        }
+        await get().refresh();
+        notice('success', 'Merge undone — the groups are separate again');
+        return true;
+      } catch (error) {
+        notice('error', errorMessage(error));
+        return false;
       } finally {
         set({ busy: false });
       }

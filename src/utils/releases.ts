@@ -1,21 +1,19 @@
 /**
- * Where the installers live.
+ * Where the installers live: this deployment's own folder.
  *
- * Every link points at GitHub's `releases/latest/download/<name>` path, which
- * always resolves to the newest published release. That is the whole design: a
- * build is published once, by `npm run release`, under a name that never
- * changes, and every link written today keeps working for every build after it.
- * No version is baked into a URL, and nothing has to be re-uploaded or re-edited
- * when the application is deployed again.
+ * `npm run release` copies the installers the build just produced into
+ * `public/downloads`, so the page and the files it offers are published
+ * together — one deployment carries both, and there is no second service to
+ * keep in step. That is why the links are relative: a build is served from
+ * wherever it was deployed, and `<site>/downloads/AfterImage-setup.exe` is
+ * beside it either way.
  *
- * The asset names are fixed for the same reason the links are. The version
- * belongs to the release tag, not to the filename, so `AfterImage-setup.exe` is
- * replaced in place by each release rather than accumulating a folder of
- * versioned copies that the interface would have to know about.
+ * What this replaced: every link pointed at GitHub's
+ * `releases/latest/download/<name>` path. That made the download depend on a
+ * repository being public, having been released, and being reachable from
+ * wherever the page was opened — and it meant a deployment could ship a page
+ * whose buttons led somewhere other than the build sitting next to it.
  */
-
-/** Substituted at build time from `package.json`; empty when it has no repository. */
-const REPO = typeof __RELEASE_REPO__ === 'string' ? __RELEASE_REPO__ : '';
 
 export interface ReleaseTarget {
   id: 'windows' | 'android';
@@ -23,8 +21,8 @@ export interface ReleaseTarget {
   label: string;
   /** The file, in the words a person choosing between two files would use. */
   detail: string;
-  /** The asset name `scripts/release.mjs` publishes under. */
-  asset: string;
+  /** Path under the site root; the name `scripts/release.mjs` stages under. */
+  file: string;
   icon: string;
 }
 
@@ -33,34 +31,69 @@ export const RELEASE_TARGETS: ReleaseTarget[] = [
     id: 'windows',
     label: 'Windows',
     detail: 'Installer (.exe) · 64-bit · Windows 10 and later',
-    asset: 'AfterImage-setup.exe',
+    file: 'downloads/AfterImage-setup.exe',
     icon: 'Monitor',
   },
   {
     id: 'android',
     label: 'Android',
     detail: 'Package (.apk) · Android 8 and later',
-    asset: 'AfterImage.apk',
+    file: 'downloads/AfterImage.apk',
     icon: 'Smartphone',
   },
 ];
 
 /**
- * True when the installers can be offered at all.
+ * The URL for one installer.
  *
- * A fork with no repository of its own has nowhere to point, and a download
- * button that leads to a 404 is worse than no button — so the interface asks
- * this first rather than assuming the links resolve.
+ * `BASE_URL` rather than a leading slash, so a deployment under a subpath —
+ * `/afterimage/` — links to its own copy rather than to the domain root.
  */
-export function releasesAvailable(): boolean {
-  return REPO.length > 0;
-}
-
 export function downloadUrl(target: ReleaseTarget): string {
-  return `https://github.com/${REPO}/releases/latest/download/${target.asset}`;
+  const base = import.meta.env.BASE_URL || '/';
+  return `${base.endsWith('/') ? base : `${base}/`}${target.file}`;
 }
 
-/** Where a user can see what changed, and find every older build. */
-export function releasesPageUrl(): string {
-  return `https://github.com/${REPO}/releases`;
+/**
+ * Which installers this deployment actually has.
+ *
+ * There is no way to know from the bundle: the same page is deployed with and
+ * without the artifacts, depending on whether a desktop build ran before it was
+ * published. So each file is asked for, and a row is only offered when the
+ * answer is the file itself.
+ *
+ * `text/html` is treated as missing on purpose. A static host with a
+ * single-page-app fallback answers every unknown path with the site's own
+ * `index.html` and a cheerful 200, which would otherwise turn "we never built
+ * an Android package" into a download button that saves a web page.
+ *
+ * A request that fails outright counts as present: the failure that must never
+ * happen is hiding an installer that is really there because the network was
+ * busy for a moment.
+ */
+export async function probeInstallers(): Promise<Record<string, boolean>> {
+  const entries = await Promise.all(
+    RELEASE_TARGETS.map(async (target) => {
+      try {
+        const response = await fetch(downloadUrl(target), {
+          method: 'GET',
+          headers: { Range: 'bytes=0-0' },
+          cache: 'no-store',
+        });
+        // The body is not wanted — only the headers are; this releases the
+        // connection rather than reading a five-megabyte installer.
+        try {
+          await response.body?.cancel();
+        } catch {
+          /* nothing to release */
+        }
+        const type = response.headers.get('content-type') ?? '';
+        const missing = response.status === 404 || type.includes('text/html');
+        return [target.id, !missing] as const;
+      } catch {
+        return [target.id, true] as const;
+      }
+    }),
+  );
+  return Object.fromEntries(entries);
 }

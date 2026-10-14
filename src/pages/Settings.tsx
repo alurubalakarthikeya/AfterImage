@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Appearance, BuildInfo, Density } from '@/types';
+import type { AnalysisStatus, Appearance, BuildInfo, Density } from '@/types';
 import { useArchiveStore } from '@/stores/archive';
 import { useSettingsStore } from '@/stores/settings';
 import { useUIStore } from '@/stores/ui';
@@ -10,7 +10,6 @@ import { USE_CASES } from '@/utils/useCases';
 import { Page } from '@/components/common/Page';
 import { Row, Section } from '@/components/common/Section';
 import { Organizer } from '@/components/settings/Organizer';
-import { DownloadApp } from '@/components/settings/DownloadApp';
 import { InstallApp } from '@/components/settings/InstallApp';
 import { PageHeader } from '@/components/common/PageHeader';
 import { Button } from '@/components/common/Button';
@@ -74,6 +73,16 @@ const DENSITIES: Array<{ id: Density; label: string }> = [
 const MODELS = ['llama3.2:3b', 'qwen2.5:3b', 'phi3.5:mini', 'ministral:8b'];
 
 /**
+ * Vision models, which are a different animal from the list above.
+ *
+ * Every one of these takes an image as well as a prompt — a text model asked to
+ * describe a photograph would only ever guess from the filename, which is the
+ * one thing this feature exists to stop. All are pulled through Ollama on this
+ * machine; nothing here reaches the network.
+ */
+const VISION_MODELS = ['llava:7b', 'llava:13b', 'llama3.2-vision:11b', 'qwen2.5vl:7b', 'moondream'];
+
+/**
  * Settings.
  *
  * Every switch here maps to real behaviour, and the ones that need the desktop
@@ -88,6 +97,9 @@ export function Settings() {
   const [newFolder, setNewFolder] = useState('');
   const [build, setBuild] = useState<BuildInfo | null>(null);
   const [starting, setStarting] = useState(false);
+  const [analysis, setAnalysis] = useState<AnalysisStatus | null>(null);
+  const [describing, setDescribing] = useState(false);
+  const [installingVision, setInstallingVision] = useState(false);
 
   const host = getHost();
   const index = useArchiveStore((state) => state.index);
@@ -109,6 +121,13 @@ export function Settings() {
   const faceBundle = peopleModels.bundles.find((bundle) => bundle.name === 'faces');
   const facesReady = faceBundle?.ready ?? false;
   const facesCost = faceBundle ? Math.round(faceBundle.megabytes) : null;
+  // The bundle that reads the pictures themselves. It is the difference between
+  // a search that can answer "the photo beside a red motorcycle" and one that
+  // can only answer with filenames, so its state is shown where the switch that
+  // depends on it lives rather than three screens away.
+  const visionBundle = peopleModels.bundles.find((bundle) => bundle.name === 'vision');
+  const visionReady = visionBundle?.ready ?? false;
+  const visionCost = visionBundle ? Math.round(visionBundle.megabytes) : null;
   const peopleStats = people.stats;
 
   useEffect(() => {
@@ -123,6 +142,97 @@ export function Settings() {
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** How far the models have got, read from the database rather than guessed. */
+  const refreshAnalysis = async () => {
+    try {
+      setAnalysis(await host.analysisStatus());
+    } catch {
+      // A host that does not answer has nothing to show; the row below simply
+      // does not appear rather than showing a number that is not one.
+      setAnalysis(null);
+    }
+  };
+
+  const remaining = analysis?.remaining ?? 0;
+  const working = describing || remaining > 0;
+
+  useEffect(() => {
+    void refreshAnalysis();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Polled only while there is something to poll for. A finished pass stops the
+  // timer on its own, so an idle Settings page costs one read on mount and
+  // nothing at all afterwards.
+  useEffect(() => {
+    if (!working) return;
+    const timer = setInterval(() => void refreshAnalysis(), 2000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [working]);
+
+  /** Ask the pipeline to look at everything it has not described yet. */
+  const describeLibrary = async () => {
+    setDescribing(true);
+    try {
+      const queued = await host.analyzeLibrary();
+      pushNotice({
+        level: 'success',
+        message:
+          queued > 0
+            ? `${formatCount(queued)} ${queued === 1 ? 'file' : 'files'} queued for descriptions — running in the background.`
+            : 'Nothing waiting: every file has already been described.',
+      });
+      await refreshAnalysis();
+    } catch (error) {
+      pushNotice({
+        level: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'The description pass could not be started.',
+      });
+    } finally {
+      // Whether or not it started, this button is no longer pressed. The poll
+      // above carries the progress from here, so the state cannot get stuck
+      // saying "running" to a pass that never began.
+      setDescribing(false);
+    }
+  };
+
+  /**
+   * Fetch the visual models, then let the pipeline use them.
+   *
+   * The download runs on the shell's own thread — the command starts the local
+   * service when it is not running, fetches the bundle and then runs an analysis
+   * pass — so nothing is awaited beyond the request itself. The status is re-read
+   * a few seconds later rather than polled here, because a 150 MB download is
+   * not something a settings row should sit and watch.
+   */
+  const installVision = async () => {
+    setInstallingVision(true);
+    try {
+      await host.installModels(['vision']);
+      pushNotice({
+        level: 'info',
+        message:
+          'Fetching the visual models — around 150 MB, once. Labels and descriptions start as soon as they land.',
+      });
+      window.setTimeout(() => {
+        void people.loadModels();
+        void refreshAnalysis();
+      }, 5000);
+    } catch (error) {
+      pushNotice({
+        level: 'error',
+        message:
+          error instanceof Error ? error.message : 'The visual models could not be fetched.',
+      });
+    } finally {
+      setInstallingVision(false);
+    }
+  };
 
   /**
    * Start the local indexer because the interface says it is not running.
@@ -310,11 +420,7 @@ export function Settings() {
         </Row>
       </Section>
 
-      {/* Both render nothing inside the desktop build, which is already
-          installed. The downloads come first: a visitor deciding between the
-          page and the program is asking a more consequential question than
-          whether to pin the page to a home screen. */}
-      <DownloadApp />
+      {/* The install row for this platform, when there is one to offer. */}
       <InstallApp />
 
       <Section
@@ -407,8 +513,8 @@ export function Settings() {
         </form>
         {!host.capabilities.nativeDialogs && (
           <p className="text-2xs leading-relaxed text-ink-3">
-            The folder picker is part of the desktop build. This preview can only describe what the
-            index would do — it cannot read this machine's filesystem.
+            This browser does not offer a folder picker, so there is no way to grant access to a
+            folder from here. The installed app reads the disk directly.
           </p>
         )}
       </Section>
@@ -486,6 +592,111 @@ export function Settings() {
               checked={settings.llmEnabled}
               onChange={settings.setLlmEnabled}
             />
+          </div>
+        </Row>
+        <Row
+          label="Visual models"
+          hint={
+            visionReady
+              ? 'Installed. Every picture is read on this machine for its labels, its embedding and — with a vision model chosen below — a written description. Nothing is uploaded.'
+              : 'One download, once. A local model looks at each picture and writes the labels and the similarity vector that let search answer a description of what is in the photograph rather than only its filename.'
+          }
+        >
+          {/* The same three states the face models use, for the same reason:
+              offering a download while nothing is running to download into is
+              what made that button look broken. */}
+          {visionReady ? (
+            <Badge tone="positive">Installed</Badge>
+          ) : peopleModels.available ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="Download"
+              loading={installingVision}
+              onClick={() => void installVision()}
+            >
+              Download{visionCost ? ` \u00b7 ${visionCost} MB` : ''}
+            </Button>
+          ) : peopleModels.canStart ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="Play"
+              disabled={starting}
+              onClick={() => void startIndexer()}
+            >
+              {starting ? 'Starting\u2026' : 'Start indexer'}
+            </Button>
+          ) : (
+            <Badge tone="caution">Not installed</Badge>
+          )}
+        </Row>
+        <Row
+          label="Image descriptions"
+          hint={
+            settings.vlmEnabled
+              ? 'A vision model reads each photograph and writes a sentence and labels for it — the part that lets search find "the photo beside a red motorcycle" when the file is called IMG_4021.jpg. Everything stays on this machine.'
+              : 'Off: pictures are still found through filenames, text in the file, tags, visual labels and faces. Switch this on for a written description of each photograph.'
+          }
+        >
+          <div className="flex items-center gap-2">
+            <select
+              value={settings.vlmModel}
+              onChange={(event) => settings.setVlmModel(event.target.value)}
+              disabled={!settings.vlmEnabled}
+              aria-label="Vision model"
+              className="h-9 rounded-input border border-line bg-surface px-2.5 text-meta text-ink outline-none disabled:opacity-50"
+            >
+              {VISION_MODELS.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+            <Toggle
+              label="Image descriptions"
+              checked={settings.vlmEnabled}
+              onChange={settings.setVlmEnabled}
+            />
+          </div>
+        </Row>
+        <Row
+          label="Descriptions written"
+          hint={
+            isTauri()
+              ? 'The pipeline only reads files it has not described, so running this twice costs nothing. Files whose model did not answer come back on their own.'
+              : 'A written description of each picture comes from the local vision models, which the installed app runs. This page searches what it has read itself — filenames, dates, shapes, colours and any text already inside a file.'
+          }
+        >
+          <div className="flex max-w-full items-center gap-3">
+            {analysis && analysis.total > 0 && (
+              <>
+                <ProgressBar
+                  value={analysis.analysed}
+                  max={analysis.total}
+                  height={4}
+                  className="w-[120px] shrink-0"
+                  tone="ink"
+                />
+                <span className="shrink-0 text-2xs tabular-nums text-ink-3">
+                  {formatCount(analysis.analysed)} of {formatCount(analysis.total)}
+                </span>
+              </>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="Eye"
+              loading={working}
+              disabled={!isTauri() || working || !settings.localProcessing || folders.length === 0}
+              onClick={() => void describeLibrary()}
+            >
+              {working
+                ? `Describing\u2026 ${formatCount(remaining)} left`
+                : settings.vlmEnabled
+                  ? 'Describe the library'
+                  : 'Run analysis'}
+            </Button>
           </div>
         </Row>
         <Row label="Indexer service port" hint="The local FastAPI service listens on loopback only.">

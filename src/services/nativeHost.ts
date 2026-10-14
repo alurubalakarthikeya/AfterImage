@@ -181,6 +181,9 @@ export function createNativeHost(): ArchiveHost {
     fileFaces: (fileId) => invoke<FileFace[]>('file_faces', { fileId }),
     renamePerson: (personId, label) => invoke<void>('rename_person', { personId, label }),
     mergePeople: (fromId, intoId) => invoke<void>('merge_people', { fromId, intoId }),
+    mergePeopleMany: (fromIds, intoId) =>
+      invoke<void>('merge_people_many', { fromIds, intoId }),
+    undoPeopleMerge: () => invoke<boolean>('undo_people_merge'),
     setPersonHidden: (personId, hidden) => invoke<void>('set_person_hidden', { personId, hidden }),
     forgetPerson: (personId) => invoke<number>('forget_person', { personId }),
     regroupPeople: () => invoke<number>('regroup_people'),
