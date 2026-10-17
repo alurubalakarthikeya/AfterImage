@@ -23,6 +23,13 @@ __pycache__/
 venv/
 services/indexer/models/
 services/indexer/.cache/
+services/indexer/build/
+services/indexer/*.spec
+
+# the frozen engine — produced by `npm run service:build`, never committed
+src-tauri/resources/indexer/afterimage-indexer/
+src-tauri/resources/indexer/afterimage-indexer.exe
+src-tauri/resources/indexer/afterimage-indexer
 
 # local data / user state
 .afterimage/

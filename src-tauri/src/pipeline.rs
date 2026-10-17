@@ -430,11 +430,20 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
             .file_name()
             .map(|value| value.to_string_lossy().to_string())
             .unwrap_or_else(|| job.path.clone());
-        let tags = context::derive_tags(&job.kind, &name, &labels, text.as_deref());
+        // Provenance travels with the tag: what the model saw, what the text
+        // said, and what the filename claimed are three different claims, and
+        // the inspector shows which one is behind each tag.
+        let tags = context::derive_tag_evidence(&job.kind, &name, &labels, text.as_deref());
         let inferred = context::infer(&job.kind, &name, &labels, text.as_deref());
 
         {
             let conn = state.db()?;
+            // `file_tags` stores a name and a source, which is the smallest
+            // shape that can carry provenance into search and the inspector.
+            let tag_pairs: Vec<(String, &'static str)> = tags
+                .iter()
+                .map(|tag| (tag.name.clone(), tag.source))
+                .collect();
             match described {
                 Some(answer) => {
                     db::save_generated(
@@ -443,8 +452,9 @@ fn process(state: &Arc<AppState>, job: &Job) -> AppResult<()> {
                         answer.title.as_deref(),
                         answer.description.as_deref(),
                         &labels,
+                        &answer.scores,
                         inferred.as_deref(),
-                        &tags,
+                        &tag_pairs,
                     )?;
                     db::set_description_engine(&conn, &job.file_id, answer.engine.as_deref())?;
                     // `described` is the state that means "a vision model has

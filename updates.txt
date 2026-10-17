@@ -1,0 +1,515 @@
+AFTERIMAGE — PRODUCT NOTES
+Build 0.1.4 · Windows (NSIS) · Apache-2.0
+================================================================================
+
+0. WHAT CHANGED IN 0.1.4
+--------------------------------------------------------------------------------
+
+  Image tagging rewritten.  One flat list of prompts for every image is
+  replaced by a two-stage taxonomy: decide what kind of picture this is, then
+  ask a short vocabulary that belongs to that kind. Labels are asked several
+  ways, pooled, renormalised across labels, and filtered by share and margin.
+  Broad labels are dropped when a specific child wins. Measured on 40 of the
+  photographs in this archive: 25 distinct tag sets, 2 files with no labels,
+  2 accidental graphic classifications (down from 3 in 30 before the change).
+
+  Tag provenance.  Machine tags are now stored with the evidence behind them —
+  vision, ocr, filename or kind — instead of a single 'ai' value. Re-analysis
+  replaces every non-user tag and still never touches a tag typed by hand.
+
+  Label shares stored.  files.label_scores holds the share each kept label
+  held, so the interface can show why a tag exists instead of presenting every
+  label as equally certain.
+
+  Faster description.  The image is encoded once and reused for both stages,
+  and prompt vectors are cached, so a file that took ~1.5 s now takes ~0.45 s
+  at the median (measured over 40 photographs, ONNX CPU).
+
+  Re-analysis stamp fixed.  The "models arrived" stamp is now written only
+  after the reopened files actually reach the queue. Before, a crash or a
+  closed window between stamping and enqueue left the library marked as
+  reopened with nothing reopened.
+
+  Engine packaging.  The release path now freezes the Python engine with
+  PyInstaller (folder build) and the supervisor finds it wherever the
+  installer puts it, including its own working directory. The frozen engine
+  currently segfaults inside ONNX Runtime on first inference, so this release
+  still installs without one — see section 7.
+
+  New checks.  npm run service:test runs 30 service tests (tagging rules and
+  embedding-space invariants, no models needed). npm run eval:tags reports tag
+  quality over any folder without printing paths or descriptions.
+
+A local-first archive for the files you already own. It watches folders on
+this machine, indexes what it finds, and makes the whole collection findable
+by name, by the text inside a screenshot, and by what is actually in the
+picture. No account, no upload, no telemetry, and no file is moved without
+being asked.
+
+
+--------------------------------------------------------------------------------
+1. THE SHAPE OF THE THING
+--------------------------------------------------------------------------------
+
+AfterImage is one desktop program made of four layers.
+
+  Interface      React 19 + TypeScript, bundled by Vite, styled with Tailwind.
+                 Runs in the Tauri webview. In a plain browser the same bundle
+                 is the download page and nothing else.
+
+  Native core    Rust on Tauri 2. Owns scanning, the watcher, thumbnails,
+                 SQLite, FTS5, ranking, face clustering, versions, the
+                 organiser, and the life cycle of the Python service.
+
+  Engine         A Python FastAPI service on 127.0.0.1:8765. OCR, PDF text
+                 and page rendering, video stills, CLIP labels, captioning,
+                 embeddings, vector search, face detection, optional Ollama.
+
+  Storage        One SQLite database, one vector sidecar, thumbnails and
+                 versions — all under the OS application-data directory.
+
+The layers are independent on purpose. If the engine is absent, the archive
+still scans, classifies, thumbnails, searches names and metadata, and says
+what it could not do. If a model is missing, only the feature that needed it
+is missing.
+
+
+--------------------------------------------------------------------------------
+2. THE LIFE OF A FILE
+--------------------------------------------------------------------------------
+
+Step 1 — Discovery
+  Adding a folder walks it and writes a row per file immediately, so the grid
+  fills in before anything is processed. Directories that never belong in an
+  archive (.git, node_modules, build output, hidden folders) are skipped.
+  Each file is classified by extension and, for images, by its containing
+  folder: a file inside "Screenshots" is a capture even if it is named
+  IMG_0001.
+
+Step 2 — Change detection
+  A fingerprint of byte size and modification time answers "changed?" without
+  reading the file. Unchanged files cost one directory-walk comparison. This
+  is what makes rescanning a large folder cheap and makes the scan idempotent.
+
+Step 3 — Queue
+  Supported formats are queued; everything else is stored with an
+  "unsupported" state so it is visible but never processed. The queue counts
+  its own total, pending and completed items, which is what the progress bar
+  and the "per minute" figure read.
+
+Step 4 — Stills and thumbnails
+  Images are decoded natively. Videos and PDFs cannot be decoded by the shell,
+  so the engine renders one still at high resolution, reports the real
+  duration or page count from the same decode, and the shell derives a 640 px
+  grid thumbnail and a 1600 px presentation copy from it.
+
+Step 5 — Text
+  Images go through OCR. PDFs are tried for a text layer first and only
+  rasterised if there is none. Text-like files are read directly. The result
+  is stored with its engine, confidence and page count, and marks the file's
+  ocr_state as extracted, unavailable or none. "Extracted but empty" is
+  recorded as a result, not a failure.
+
+Step 6 — Understanding
+  The picture is classified against a fixed prompt vocabulary; only labels
+  above the confidence floor survive. Tags are then derived from the model's
+  labels, from signals in the extracted text, from the filename, and from the
+  file kind. An inferred one-line context ("Programming / React debugging")
+  is written from the same evidence. When nothing is available, nothing is
+  invented: the row keeps its filename and metadata.
+
+Step 7 — Embeddings (optional)
+  With semantic search on, the engine embeds the image and its text. Vectors
+  live in a sidecar index and are flushed to disk when the queue drains.
+
+Step 8 — Faces
+  Faces are detected and embedded locally, then grouped against existing
+  people in the Rust process. A photograph of a landscape is recorded as
+  "scanned, none found" so it is never rescanned for nothing.
+
+Every stage writes its own state column. The row is marked indexed when the
+pipeline is finished with it, not when every stage succeeded — the columns
+carry the difference.
+
+
+--------------------------------------------------------------------------------
+3. FEATURE CATALOGUE
+--------------------------------------------------------------------------------
+
+3.1 FOLDER WATCHING AND SCANNING
+  What it does   Keeps the archive in step with the disk.
+  How it works   A notify-based watcher reports create, change and delete
+                 events; each is debounced and fed into the same idempotent
+                 scan used for the first pass. Files that vanished are marked
+                 missing rather than deleted from the index, and an activity
+                 entry records it.
+  Where          src-tauri/src/scan.rs, watcher.rs, index.rs
+
+3.2 THUMBNAILS AND PREVIEWS
+  What it does   Every tile is a real picture of the file.
+  How it works   Two derivatives are written per file: a grid thumbnail
+                 (640 px long edge) and a presentation copy (1600 px) used by
+                 the hero and quick look. Videos and documents get theirs from
+                 a rendered still. Files that cannot be decoded show a
+                 placeholder naming the format instead of borrowed artwork.
+  Where          src-tauri/src/thumbs.rs
+
+3.3 TEXT EXTRACTION
+  What it does   Makes the contents of images and documents searchable.
+  How it works   RapidOCR by default (PaddleOCR when the environment builds
+                 it), PyMuPDF for text layers and page rendering, a direct
+                 read for text files. Confidence and engine are stored.
+  Where          services/indexer/app/ocr.py, extract.py
+
+3.4 VISUAL LABELS, TITLES AND DESCRIPTIONS
+  What it does   Says what a picture is, in words that can be searched.
+  How it works   Two questions, both answered by CLIP ViT-B/32. First the kind:
+                 screenshot, document, diagram, photograph, illustration or
+                 graphic, with the scan's own classification as a prior rather
+                 than a verdict. Then the specific vocabulary inside that kind,
+                 each label asked two or three different ways and pooled. Shares
+                 are renormalised across labels, a label must clear a floor (or
+                 decisively lead the runner-up), and extra labels must hold a
+                 real share of the top one. A broad label is dropped when a
+                 specific child won: dog suppresses animal, beach suppresses
+                 outdoors.
+
+                 BLIP writes a title when PyTorch is installed. With a vision
+                 model in Ollama, the model may add a sentence and extra labels,
+                 and only ever adds to the measured labels — it does not replace
+                 them.
+  Where          services/indexer/app/tagging.py, describe.py, vision.py, vlm.py
+
+3.5 TAGS
+  What it does   Groups files by what they are and what they contain.
+  How it works   Four evidence sources, in order: model labels, phrases found
+                 in the extracted text, phrases found in the filename, and the
+                 kind itself. Each tag is stored with its source — vision, ocr,
+                 filename or kind — and the share it held (files.label_scores).
+                 Re-analysis replaces every row whose source is not 'user';
+                 tags typed by hand are never touched, and words that describe
+                 the container (photo, image, picture, scene) never become tags.
+  Where          src-tauri/src/context.rs, db.rs (set_analysis_tags)
+
+3.6 SEARCH
+  What it does   Finds a file by any part of what is known about it.
+  How it works   SQLite FTS5 over name, title, description, labels, inferred
+                 context, extracted text, folder, tags, project and the names
+                 of people in the file. Candidates are reranked by query
+                 coverage and word proximity, so a described photograph beats
+                 a filename coincidence. Filters are part of the query text.
+  Where          src-tauri/src/search.rs, src-tauri/src/db.rs (FTS5 projection)
+
+  Query syntax:
+    beach sunset                 all words, ranked
+    kind:screenshot              photo, screenshot, document, video, audio,
+                                 design, archive, other
+    #react                       a tag
+    is:favorite                  favourites only
+    since:7                       modified in the last seven days
+    "exact phrase"               quoted phrase
+
+3.7 SEMANTIC SEARCH
+  What it does   Finds pictures by describing them, without shared words.
+  How it works   CLIP image vectors and MiniLM text vectors, fused with the
+                 full-text candidates. The vector store prefers sqlite-vec,
+                 then FAISS, then numpy. Enabled by default in Settings; the
+                 models are downloaded on demand and verified.
+  Where          services/indexer/app/embed.py, vector_store.py
+
+3.8 SIMILAR AND RELATED FILES
+  What it does   "More like this" from any file.
+  How it works   Similar uses the embedding neighbourhood; related combines
+                 shared tags, folder, kind and time proximity, so it still
+                 produces something on a machine with no vectors.
+  Where          src-tauri/src/search.rs (similar, related)
+
+3.9 PEOPLE
+  What it does   Groups the faces in a library, without naming anybody.
+  How it works   YuNet detects, SFace embeds, cosine similarity against
+                 existing groups with a fixed threshold decides join-or-new.
+                 Rename, merge (with one-step undo), hide and forget are all
+                 local operations. A face-only pass rescans files indexed
+                 before the models existed.
+  Where          src-tauri/src/people.rs, services/indexer/app/faces.py
+
+3.10 IMAGE DNA
+  What it does   Describes a picture from its own pixels.
+  How it works   A downsampled pass measures palette (weighted colour buckets),
+                 brightness, contrast, sharpness/detail and warm-cool cast.
+                 Every number is computed from the file, never inferred from
+                 metadata.
+  Where          src-tauri/src/dna.rs
+
+3.11 VERSIONS AND COMPARISON
+  What it does   Shows what an image looked like before it was edited.
+  How it works   Before writing a replacement presentation copy, the existing
+                 one is kept (at most 12 per file). A draggable divider
+                 compares the kept copy with the current one. Manual capture
+                 and deletion are available; the original on disk is untouched.
+  Where          src-tauri/src/versions.rs, src/components/files/Comparison.tsx
+
+3.12 DOCUMENT AND VIDEO READER
+  What it does   Reads a PDF or previews a video inside the window.
+  How it works   Pages are rendered by the engine into the thumbnail folder
+                 and shown as images, so behaviour does not depend on a webview
+                 PDF plugin. Page renders are cached on disk.
+  Where          src-tauri/src/commands.rs (media_pages), src/components/files/MediaViewer.tsx
+
+3.13 ORGANISATION
+  What it does   Collections, projects, favourites, smart rows.
+  How it works   All are saved views over the index. Collections can be filled
+                 from a context menu or the sidebar; projects are a single
+                 assignment per file; favourites are a flag. Home lists the
+                 largest collections with real counts and real thumbnail
+                 strips.
+  Where          src/stores/collections.ts, src/components/dashboard/SmartCollections.tsx
+
+3.14 THE ORGANISER
+  What it does   Files the disk the way the archive already has it filed.
+  How it works   A plan is computed and shown first: moves, bytes, folders to
+                 create, and files deliberately left alone with the reason.
+                 Applying recomputes the plan, then moves with collision-safe
+                 names. Files in a collection go under that collection inside
+                 their kind; everything else goes to Unfiled.
+  Where          src-tauri/src/organize.rs, src/components/settings/Organizer.tsx
+
+3.15 THE INTERFACE
+  What it does   A calm way to browse tens of thousands of files.
+  How it works   Keyed routes (Home, All Files, Photos, Screenshots, Documents,
+                 Videos, People, Projects, Collections, Search, Settings) with
+                 grid, list and timeline layouts; a quick-look overlay; an
+                 inspector with metadata, tags, DNA, related files and faces;
+                 a command palette; keyboard shortcuts; drag-and-drop import;
+                 context menus; an onboarding wizard; light/dark appearance,
+                 density and a reduced-transparency switch.
+  Where          src/components/**, src/pages/**, src/stores/**
+
+3.16 SETTINGS AND MODELS
+  What it does   Everything that changes behaviour, in one place.
+  How it works   Profile, appearance, watched folders, indexing and search,
+                 people and face grouping, notifications, storage, privacy.
+                 Model bundles (vision 148 MB, faces 37 MB, text 23 MB) are
+                 downloaded on demand into the app-data directory, and the
+                 bundle status comes from the engine, not from a local guess.
+  Where          src/pages/Settings.tsx, services/indexer/app/models.py
+
+3.17 THE WEBSITE
+  What it does   One page: what this is, and the installer.
+  How it works   The browser build renders only the landing page. It probes
+                 its own /downloads folder before offering a button, so it
+                 never links to a file that is not there. The desktop build
+                 never renders it.
+  Where          src/pages/Landing.tsx, src/utils/releases.ts
+
+3.18 RELEASE
+  What it does   Freezes the engine, builds the installer, and puts it beside
+                 the page.
+  How it works   `npm run release` first calls `service.mjs build`, which runs
+                 PyInstaller against services/indexer/serve.py and drops
+                 afterimage-indexer.exe into src-tauri/resources/indexer. It
+                 then runs `tauri:build` and copies the NSIS installer into
+                 public/downloads and the built site's downloads folder. The
+                 freeze is attempted, not required: without PyInstaller the
+                 release still publishes, with a warning. No GitHub release is
+                 involved.
+  Where          scripts/release.mjs, scripts/service.mjs
+
+
+--------------------------------------------------------------------------------
+4. MODELS
+--------------------------------------------------------------------------------
+
+  clip_vit_b32_vision.onnx   CLIP image encoder — zero-shot labels, vectors
+  clip_vit_b32_text.onnx     CLIP text encoder — text side of image search
+  clip_tokenizer.json        tokenizer for the above
+  clip_preprocessor.json     normalisation and resize parameters
+  minilm_l6_v2.onnx          MiniLM-L6 — sentence embeddings
+  minilm_tokenizer.json      tokenizer for the above
+  face_detection_yunet_2023mar.onnx   face detection
+  face_recognition_sface_2021dec.onnx face embeddings
+
+  Total download: about 208 MB across the vision, faces and text bundles.
+  Everything runs through ONNX Runtime on the CPU. PyTorch is optional and
+  only used for captioning. Ollama, when present, is asked for language, not
+  for measurement.
+
+
+--------------------------------------------------------------------------------
+5. DATA MODEL
+--------------------------------------------------------------------------------
+
+  folders            watched roots, their status and last scan
+  files              one row per file: identity, paths, kind, size, dates,
+                     states, thumbnail and preview paths, generated title,
+                     description, labels, inferred context
+  ocr_content        extracted text per file with engine and confidence
+  tags / file_tags   tag vocabulary and assignments, with source 'ai' or user
+  collections        saved collections and their membership
+  projects           one project per file
+  people / faces     unnamed groups, individual faces, crops and embeddings
+  file_versions      kept presentation copies with their timestamps
+  activity           a human-readable trail of what happened
+  settings           the runtime switches the native core reads
+  file_search        FTS5 projection, rebuilt whenever content changes
+
+  Database, thumbnails, versions, faces, model weights and the vector index
+  all live in one directory, so a backup is a copy.
+
+
+--------------------------------------------------------------------------------
+6. RUNTIME SWITCHES AND THEIR DEFAULTS
+--------------------------------------------------------------------------------
+
+  service_enabled      on    run the local engine at all
+  auto_index           on    index changes without being asked
+  index_on_battery     off   hold the queue on battery power
+  semantic_search      on    embed and fuse vectors (this archive: off)
+  vlm_enabled          off   let a vision model describe files
+  llm_enabled          off   let a local model rewrite queries
+  faces                on    detect and group faces when the bundle is ready
+
+  The pipeline reads these per file, so changing one affects the next file
+  rather than requiring a restart.
+
+
+--------------------------------------------------------------------------------
+7. WHAT IS HONESTLY NOT DONE
+--------------------------------------------------------------------------------
+
+  Self-contained installer
+      The freeze itself now works: `npm run service:build` produces
+      resources/indexer/afterimage-indexer/ (folder build, ~115 MB compressed)
+      and the supervisor starts it, including from its own working directory
+      rather than a compile-time path. What does not work is inference: the
+      frozen process serves /health and /models, then dies with a segmentation
+      fault inside ONNX Runtime the first time a model runs. This reproduces in
+      both --onefile and --onedir builds, and does not happen with the same
+      code in the virtual environment — so it is a native-library problem in
+      the bundle (ONNX Runtime plus its bundled providers), not a bug in the
+      tagging code.
+
+      Because a crashing engine is worse than an absent one, this installer
+      ships no engine. On this development machine the shell still finds
+      services/indexer/.venv and runs the current Python, which is why the new
+      tagging is testable here. On a clean machine OCR, labels, embeddings and
+      faces stay off until the freeze is fixed; the next step is reproducing
+      the crash with onnxruntime's own diagnostics and pinning or replacing
+      the provider DLLs the bundle loads.
+
+  Re-analysis after a late model install
+      A library indexed before its models were downloaded is full of rows
+      marked "analysed" that contain nothing a model wrote. Settings ->
+      Analyze library reopens those rows, and installing a vision or text
+      bundle does it automatically — but it does not happen unprompted when
+      the engine merely becomes ready. A fresh archive indexed with models
+      present is unaffected.
+
+  Semantic search writes no vectors while switched off
+      This archive has it off, so every file has embedding_state = none.
+      Turning it on and running Analyze library backfills the existing files.
+
+  Vision descriptions need Ollama
+      The app never installs or starts Ollama. Without it there are labels
+      and tags but no model-written sentence.
+
+  One library per machine
+      There are no accounts, no profiles and no merge. That is a design
+      choice, not a missing feature — but it means two people sharing a
+      computer share an archive.
+
+  Duplicate detection
+      Two copies of the same photograph are two rows. There is no perceptual
+      hash that would collapse them.
+
+  Windows only, for now
+      The Tauri bundle targets NSIS, and the release script stages a Windows
+      installer. macOS and Linux builds would need their own packaging and a
+      bundled engine.
+
+
+--------------------------------------------------------------------------------
+8. HOW TO VERIFY THIS BUILD
+--------------------------------------------------------------------------------
+
+  Build identity
+      Settings -> About shows the version, the executable path, when the
+      binary was built, the data directory, and whether a bundled engine was
+      found beside the executable.
+
+  Engine health
+      curl http://127.0.0.1:8765/health
+      Reports OCR, documents, image and text embeddings, faces, vector
+      backend and which models are actually loaded.
+
+  Model bundles
+      curl http://127.0.0.1:8765/models
+      Reports ready/missing per bundle, megabytes, and the exact directory.
+
+  A single file, end to end
+      POST /index/describe with a path and kind returns the labels the
+      classifier produced for that file. POST /index/ocr returns the text.
+      POST /index/faces returns the faces. Each can be checked against the
+      file itself.
+
+  Regression checks
+      npm run typecheck       TypeScript, no emit
+      npm run check:search    52 search cases
+      npm run service:test    30 service tests (tagging, embedding spaces)
+      cargo test              49 Rust tests
+
+  Tag quality
+      npm run eval:tags -- --dir <folder> --limit 40
+      Reports distinct tag sets, files with no tags, unique tags, generic-only
+      results, most common set and label latency. Aggregates only: no paths and
+      no descriptions are printed, so it is safe on a personal library. Exits
+      non-zero when the sample looks unhealthy.
+
+
+--------------------------------------------------------------------------------
+9. DESIGN RULES THE PROJECT KEEPS
+--------------------------------------------------------------------------------
+
+  No invented data.
+      There is no sample archive, no placeholder statistics, no borrowed
+      artwork. Every number on screen is a count from the database, every
+      tile is a file the user owns, and a file no model could describe keeps
+      its name.
+
+  States are specific.
+      "Scanned, no faces found" is not the same as "faces never looked for",
+      and "extracted no text" is not the same as "text extraction failed".
+      The schema keeps them apart so the interface can say which happened.
+
+  Failures degrade, they do not cascade.
+      A missing model, a stopped service and an undecodable file each remove
+      exactly one capability.
+
+  Nothing is destroyed silently.
+      Files that vanish from disk are marked missing, not deleted. Machine
+      tags are replaced on re-analysis; hand-written tags are not. The
+      organiser shows its plan before it moves anything.
+
+  Everything is local.
+      The service binds to loopback and rejects non-local clients. The
+      webview may read the thumbnail directory and nothing else. There is no
+      telemetry endpoint to disable.
+
+
+--------------------------------------------------------------------------------
+10. THIS BUILD
+--------------------------------------------------------------------------------
+
+  Version        0.1.4
+  Installer      AfterImage_0.1.4_x64-setup.exe (NSIS)
+  Site copy      public/downloads/AfterImage-setup.exe
+  Binary date    2026-10-14 20:40
+  Core commands  70 typed Tauri commands
+  Tests          49 Rust tests, 52 search cases, 30 service tests
+  License        Apache-2.0
+
+  The installer and the site copy are byte-identical, and the binary is newer
+  than every source file in the tree, so the package contains the current
+  shell and interface code. It does not contain the Python engine — see
+  section 7 — so a fresh install indexes names, metadata and thumbnails and
+  stops there until the engine is bundled.

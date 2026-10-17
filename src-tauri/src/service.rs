@@ -48,6 +48,9 @@ pub struct Description {
     pub title: Option<String>,
     pub description: Option<String>,
     pub labels: Vec<String>,
+    /// Share of the category's answer each label held. Empty when the service
+    /// predates the field, which is treated as "no evidence recorded".
+    pub scores: std::collections::BTreeMap<String, f64>,
     /// Which engine wrote it — `ollama:llava:7b` for a vision model,
     /// `blip+clip` for the captioner. Kept because it is the only honest way to
     /// tell "the vision model described this" from "the captioner did".
@@ -202,6 +205,17 @@ pub fn describe(
                     .iter()
                     .filter_map(|value| value.as_str())
                     .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        scores: value
+            .get("scores")
+            .and_then(|value| value.as_object())
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(key, score)| {
+                        score.as_f64().map(|score| (key.clone(), score))
+                    })
                     .collect()
             })
             .unwrap_or_default(),

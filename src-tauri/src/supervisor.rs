@@ -199,26 +199,27 @@ pub fn ensure(app: &AppHandle, state: &AppState, supervisor: &Supervisor) -> Sta
 fn launch_commands(app: &AppHandle, port: u16) -> Vec<(PathBuf, Vec<String>)> {
     let mut commands: Vec<(PathBuf, Vec<String>)> = Vec::new();
 
-    // 1. Packaged beside the app binary.
+    let name = if cfg!(windows) {
+        "afterimage-indexer.exe"
+    } else {
+        "afterimage-indexer"
+    };
+
+    // 1. Packaged beside the app binary. The folder form first: the engine is
+    //    frozen with `--onedir`, because ONNX Runtime and OpenCV do not survive
+    //    being unpacked from a single-file archive.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let name = if cfg!(windows) {
-                "afterimage-indexer.exe"
-            } else {
-                "afterimage-indexer"
-            };
+            commands.push((dir.join("afterimage-indexer").join(name), serve_args(port)));
             commands.push((dir.join(name), serve_args(port)));
         }
     }
 
-    // 2. Packaged as a bundled resource.
+    // 2. Packaged as a bundled resource, same two shapes.
     if let Ok(resources) = app.path().resource_dir() {
-        let name = if cfg!(windows) {
-            "afterimage-indexer.exe"
-        } else {
-            "afterimage-indexer"
-        };
-        commands.push((resources.join("indexer").join(name), serve_args(port)));
+        let indexer = resources.join("indexer");
+        commands.push((indexer.join("afterimage-indexer").join(name), serve_args(port)));
+        commands.push((indexer.join(name), serve_args(port)));
     }
 
     // 3. A checkout's own virtual environment, which is what a development
@@ -295,9 +296,18 @@ fn log_sink(log: &Path) -> Stdio {
 }
 
 fn spawn(program: &Path, args: &[String], log: &Path) -> std::io::Result<Child> {
+    // The packaged engine lives wherever the installer put it, next to its own
+    // `_internal` folder. Starting it from a compile-time path works only on
+    // the machine that built it — on an installed copy that directory does not
+    // exist, and `spawn` fails before the engine ever runs.
+    let working = program
+        .parent()
+        .filter(|directory| directory.is_dir())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(service_dir);
     Command::new(program)
         .args(args)
-        .current_dir(service_dir())
+        .current_dir(working)
         .stdin(Stdio::null())
         .stdout(log_sink(log))
         .stderr(log_sink(log))

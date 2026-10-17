@@ -378,6 +378,7 @@ def index_describe(request: IndexRequest) -> DescribeResponse:
         title=result.title,
         description=result.description,
         labels=result.labels,
+        scores=result.scores,
         engine=result.engine,
         available=result.available,
         reason=result.reason,

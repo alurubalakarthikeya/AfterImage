@@ -1,20 +1,23 @@
-"""Image understanding: smart tags and a description, in words.
+"""Image understanding: specific labels, a sentence and a title.
 
 Three things happen here, all optional:
 
-* **Labels** — the smart tags. CLIP is asked which of a fixed set of phrases an
-  image resembles, and only the answers above a confidence floor survive. Asking
-  "is this a photograph of a dog" and getting 0.7 back is a real answer from a
-  real model, which is why it can be stored as a tag and searched later.
-* **A description** — one sentence, written from the winning phrase. This is the
-  text a natural-language query is matched against, so "that picture of the
-  error message" finds a screenshot that was never named in those words.
+* **Labels** — the smart tags. Two questions are asked instead of one: what kind
+  of picture this is, and which specific things are visible inside that kind.
+  The taxonomy and the score interpretation live in :mod:`tagging`; this module
+  only decides which model answers and what to do with the answer.
+* **A description** — one sentence, written from the labels that cleared the
+  floor. It restates measured answers and nothing else, which is what makes it
+  safe to show next to a file.
 * **A title** — only ever from a real captioning model. CLIP can say *code
   editor*; it cannot write *the failing build on Tuesday*. So with CLIP alone
   the file keeps its own name, and the description carries the meaning instead.
 
-The prompt vocabulary is deliberately broad and written the way people speak.
-Every phrase added is another query that will land.
+The labels used to compete in one flat list of ~55 prompts. A beach, a wedding
+and a mountain all surfaced the same broad winners — "outdoors", "nature",
+"text" — because those are the prompts that are slightly true of everything.
+Splitting the question by category and requiring a real share of the answer is
+what makes two photographs produce two different tag lists.
 """
 
 from __future__ import annotations
@@ -24,106 +27,16 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import embed
+from . import tagging
 from . import vision
 from . import vlm
 from .capabilities import detect
 from .config import get_settings
-from . import embed
 
 _CAPTION_LOCK = threading.Lock()
 _CAPTION_CACHE: tuple[Any, Any] | None = None
 _CAPTION_FAILED = False
-
-
-# Prompts are phrased as descriptions of the whole image, which is what CLIP was
-# trained against. The keys are what gets stored as tags.
-LABEL_PROMPTS: dict[str, str] = {
-    # screens and software
-    "screenshot": "a screenshot of a computer screen",
-    "code": "a screenshot of source code in an editor",
-    "terminal": "a screenshot of a terminal or command prompt",
-    "error": "a screenshot showing an error message or stack trace",
-    "browser": "a screenshot of a web browser",
-    "chat": "a screenshot of a chat or messaging conversation",
-    "dashboard": "a screenshot of a dashboard or analytics interface",
-    "ui": "a screenshot of an application interface",
-    "game": "a screenshot of a video game",
-    # documents and diagrams
-    "document": "a scan or photograph of a document with text",
-    "receipt": "a photograph of a receipt or invoice",
-    "handwriting": "a photograph of handwritten notes",
-    "presentation": "a slide from a presentation",
-    "chart": "a graph, chart or data visualisation",
-    "diagram": "a technical diagram or schematic",
-    "whiteboard": "a photograph of a whiteboard with writing on it",
-    "map": "a map",
-    "poster": "a poster or flyer",
-    # people
-    "person": "a photograph of a person",
-    "selfie": "a close-up selfie of a person",
-    "portrait": "a portrait photograph of one person",
-    "group": "a photograph of several people together",
-    "baby": "a photograph of a baby",
-    "crowd": "a photograph of a crowd of people",
-    # places and things
-    "outdoors": "an outdoor photograph",
-    "indoors": "an indoor photograph",
-    "nature": "a photograph of nature, plants or landscape",
-    "beach": "a photograph of a beach or the sea",
-    "mountain": "a photograph of mountains",
-    "city": "a photograph of a city or street scene",
-    "night": "a photograph taken at night",
-    "sky": "a photograph of the sky or clouds",
-    "food": "a photograph of food or a meal",
-    "drink": "a photograph of a drink",
-    "animal": "a photograph of an animal",
-    "dog": "a photograph of a dog",
-    "cat": "a photograph of a cat",
-    "bird": "a photograph of a bird",
-    "plant": "a photograph of a plant or flowers",
-    "vehicle": "a photograph of a car or other vehicle",
-    "building": "a photograph of a building or architecture",
-    "furniture": "a photograph of furniture or a room",
-    "clothing": "a photograph of clothing or an outfit",
-    "product": "a product photograph on a plain background",
-    "art": "a drawing, painting or illustration",
-    "logo": "a logo or icon",
-    # The two image categories people keep deliberately and search for by name.
-    # Phrased the way they look, because CLIP matches on appearance and "a meme"
-    # on its own resolves to pictures of the word rather than of the format.
-    "meme": "an internet meme: a funny image with a caption written over it",
-    "wallpaper": "a desktop wallpaper, an abstract or scenic background image",
-    "text": "an image that is mostly text",
-    "blurry": "a blurry or out-of-focus photograph",
-    "old": "an old or historical photograph",
-    "sports": "a photograph of a sport or game",
-}
-
-# Prompts that describe the *kind* of image rather than its subject. Kept
-# separate so a screenshot is not also tagged with everything a photo can be.
-DOCUMENT_PROMPTS: dict[str, str] = {
-    key: LABEL_PROMPTS[key]
-    for key in (
-        "screenshot",
-        "code",
-        "terminal",
-        "error",
-        "browser",
-        "chat",
-        "dashboard",
-        "ui",
-        "document",
-        "chart",
-        "diagram",
-        "whiteboard",
-        "presentation",
-        "text",
-    )
-}
-
-# The phrase used for each label when writing the description sentence. Reusing
-# the prompt keeps the sentence and the tag saying the same thing.
-_PHRASES: dict[str, str] = {"screenshot": "A screenshot of a computer screen"}
 
 
 @dataclass
@@ -131,6 +44,9 @@ class Description:
     title: str | None = None
     description: str | None = None
     labels: list[str] = field(default_factory=list)
+    # Share of the category's answer each label held, so the interface can say
+    # why a tag is there instead of presenting every label as equally certain.
+    scores: dict[str, float] = field(default_factory=dict)
     engine: str = "none"
     available: bool = False
     reason: str | None = None
@@ -206,71 +122,68 @@ def caption(path: str) -> str | None:
         return None
 
 
-def labels_for(path: str, kind: str) -> list[str]:
-    """Meaningful labels only, strongest first."""
+def _scorer(path: str):
+    """One image encode, several question sets.
+
+    The hierarchy asks a category question and then a subject question about the
+    same pixels. Encoding the picture twice doubled the cost of every file; the
+    encoder is therefore run once here and reused, and the prompt vectors are
+    cached inside :mod:`vision` because the taxonomy never changes.
+    """
+    image = vision.encode_image(path) if vision.available() else None
+
+    def score(prompts: dict[str, str]) -> dict[str, float] | None:
+        if not prompts:
+            return None
+        if image is not None:
+            answer = vision.classify_with(image, prompts)
+            if answer is not None:
+                return answer
+        # No ONNX vision bundle: the optional PyTorch CLIP path, which encodes
+        # the image itself. Rare, and correctness matters more than the cost.
+        return embed.classify_image(path, prompts)
+
+    return score
+
+
+def classify_labels(
+    path: str, kind: str
+) -> tuple[list[str], dict[str, float], tagging.Category | None]:
+    """Two-stage labelling for one picture.
+
+    Returns the labels worth storing, the share each one held, and the category
+    that was chosen. An empty list is an answer: this machine looked and nothing
+    cleared the floor.
+    """
     settings = get_settings()
     if not settings.vision_enabled:
-        return []
+        return [], {}, None
 
-    prompts = DOCUMENT_PROMPTS if kind in {"screenshot", "document"} else LABEL_PROMPTS
-    # ONNX first: it is the install this app ships with. The PyTorch path stays
-    # for anyone who already has it.
-    scores = vision.classify(path, prompts) if vision.available() else None
-    if scores is None:
-        scores = embed.classify_image(path, prompts)
-    if not scores:
-        return []
+    score = _scorer(path)
+    categories = tagging.categories_for(kind)
+    first = score(tagging.category_prompts(categories))
+    category = tagging.pick_category(kind, first)
+    second = score(tagging.prompt_map(category))
 
-    ranked = sorted(scores.items(), key=lambda item: -item[1])
-    kept = [label for label, score in ranked if score >= settings.label_floor]
+    chosen, kept = tagging.classify(
+        kind,
+        first,
+        second,
+        floor=settings.label_floor,
+        relative_floor=settings.relative_label_floor,
+        lead=settings.label_lead,
+        share=settings.label_share,
+        limit=settings.label_max,
+    )
 
-    # When nothing clears the floor, the top label is kept if it is decisively
-    # ahead of the next one.
-    #
-    # This is the difference between an archive whose photographs have tags and
-    # one whose photographs have none. Zero-shot probabilities over a couple of
-    # dozen prompts are small by construction — a clear photograph of somebody
-    # scores "selfie" at 0.16 and the runner-up at 0.11 — so an absolute floor
-    # calibrated on a sharper distribution threw away the model's only real
-    # answer and left the file looking at never having been looked at. What CLIP
-    # is actually good at is the *ranking*; a decisive lead is the evidence, not
-    # the absolute number.
-    if not kept and ranked:
-        top_label, top_score = ranked[0]
-        runner_up = ranked[1][1] if len(ranked) > 1 else 0.0
-        if (
-            top_score >= settings.relative_label_floor
-            and top_score >= runner_up * settings.label_lead
-        ):
-            kept = [top_label]
-
-    # A confident top label plus three more is plenty; past that the panel
-    # becomes noise and the search index fills with noise to match.
-    return kept[:4]
-
-
-def _sentence(labels: list[str], kind: str) -> str | None:
-    """One line of prose from the labels the model actually returned.
-
-    Nothing here decides anything new: each clause restates a tag that cleared
-    the confidence floor. That is the whole reason it is allowed to exist — a
-    sentence nobody's model produced would be indistinguishable from one that
-    was, which is the failure mode this application refuses to have.
-    """
-    if not labels:
-        return None
-
-    head = labels[0]
-    phrase = LABEL_PROMPTS.get(head)
-    if phrase is None:
-        return None
-    sentence = phrase[0].upper() + phrase[1:]
-    if len(labels) > 1 and labels[1] in LABEL_PROMPTS:
-        phrase_two = LABEL_PROMPTS[labels[1]]
-        # Strip the leading article so the two clauses do not read "a … a …".
-        phrase_two = re.sub(r"^(a|an|the)\s+", "", phrase_two)
-        sentence = f"{sentence}, {phrase_two}"
-    return f"{sentence}."
+    labels: list[str] = []
+    scores: dict[str, float] = {}
+    for label, score in kept:
+        if label in scores:
+            continue
+        labels.append(label)
+        scores[label] = round(float(score), 4)
+    return labels, scores, chosen
 
 
 def describe(path: str, kind: str, vlm_model: str | None = None) -> Description:
@@ -284,10 +197,11 @@ def describe(path: str, kind: str, vlm_model: str | None = None) -> Description:
     if not settings.vision_enabled:
         return Description(reason="image understanding is turned off")
 
-    available = detect()
-    labels = labels_for(path, kind)
+    labels, scores, category = classify_labels(path, kind)
+    if category is None:
+        category = tagging.pick_category(kind, None)
     title = caption(path) if kind in {"photo", "screenshot", "design"} else None
-    description = _sentence(labels, kind)
+    description = tagging.describe_sentence(category, labels) if labels else None
     engine = "blip+clip" if title else ("clip-onnx" if vision.available() else "clip")
 
     # ---- the vision model, when this machine has one ---------------------
@@ -317,12 +231,13 @@ def describe(path: str, kind: str, vlm_model: str | None = None) -> Description:
             for label in seen.labels + labels:
                 if label and label not in merged:
                     merged.append(label)
-            labels = merged[:6]
+            labels = merged[: max(settings.label_max, 6)]
             engine = seen.engine
             return Description(
                 title=title,
                 description=description,
                 labels=labels,
+                scores=scores,
                 engine=engine,
                 available=True,
             )
@@ -344,6 +259,7 @@ def describe(path: str, kind: str, vlm_model: str | None = None) -> Description:
         title=title,
         description=description,
         labels=labels,
+        scores=scores,
         engine=engine,
         available=True,
     )

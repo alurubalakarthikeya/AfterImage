@@ -90,14 +90,22 @@ class Settings:
     vision_enabled: bool = True
     caption_model: str = "Salesforce/blip-image-captioning-base"
     caption_max_tokens: int = 32
-    # A label is only kept above this zero-shot probability, which is what
-    # stops every screenshot from being tagged "photo".
-    label_floor: float = 0.18
+    # A label is only kept above this share of the category's answer. The
+    # shares are renormalised across labels (see tagging.pool), so the number
+    # means "how much of this picture is a dog" rather than a slice of a
+    # fifty-way prompt soup.
+    label_floor: float = 0.15
     # ...and when nothing clears it, the best label is kept anyway if it leads
-    # the runner-up by this factor and is above this probability. Zero-shot
-    # scores over a few dozen prompts are small; the lead is the evidence.
-    label_lead: float = 1.35
-    relative_label_floor: float = 0.08
+    # the runner-up by this factor and is above this share. Zero-shot scores are
+    # small by construction; the lead is the evidence.
+    label_lead: float = 1.25
+    relative_label_floor: float = 0.06
+    # Every additional label must hold at least this share of the top label's
+    # score. A file that is 40% dog and 3% beach is a dog.
+    label_share: float = 0.45
+    # One category tag plus three specifics is enough to be distinctive; past
+    # that the tag list becomes a description of the picture, not an index of it.
+    label_max: int = 4
 
     # Vector index
     vector_backend: str = "auto"  # auto | sqlite-vec | faiss | numpy
@@ -157,9 +165,11 @@ def get_settings() -> Settings:
         caption_model=os.environ.get(
             "AFTERIMAGE_CAPTION_MODEL", "Salesforce/blip-image-captioning-base"
         ),
-        label_floor=_float("AFTERIMAGE_LABEL_FLOOR", 0.18),
-        label_lead=_float("AFTERIMAGE_LABEL_LEAD", 1.35),
-        relative_label_floor=_float("AFTERIMAGE_RELATIVE_LABEL_FLOOR", 0.08),
+        label_floor=_float("AFTERIMAGE_LABEL_FLOOR", 0.15),
+        label_lead=_float("AFTERIMAGE_LABEL_LEAD", 1.25),
+        relative_label_floor=_float("AFTERIMAGE_RELATIVE_LABEL_FLOOR", 0.06),
+        label_share=_float("AFTERIMAGE_LABEL_SHARE", 0.45),
+        label_max=_int("AFTERIMAGE_LABEL_MAX", 4),
         text_model=os.environ.get(
             "AFTERIMAGE_TEXT_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
         ),

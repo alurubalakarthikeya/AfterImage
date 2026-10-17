@@ -357,6 +357,9 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
     // rest of the time.
     ensure_column(conn, "files", "previous_modified_at", "TEXT")?;
     ensure_column(conn, "files", "context", "TEXT")?;
+    // The share of the category's answer each label held, as JSON. Evidence,
+    // not decoration: it is what lets the inspector say why a tag is there.
+    ensure_column(conn, "files", "label_scores", "TEXT")?;
     ensure_column(conn, "file_tags", "source", "TEXT NOT NULL DEFAULT 'user'")?;
     // Whether the local models have had a look at this file yet.
     //
@@ -1010,18 +1013,21 @@ pub fn save_generated(
     title: Option<&str>,
     description: Option<&str>,
     labels: &[String],
+    scores: &std::collections::BTreeMap<String, f64>,
     context: Option<&str>,
-    tags: &[String],
+    tags: &[(String, &'static str)],
 ) -> AppResult<()> {
     conn.execute(
-        "UPDATE files SET generated_title = ?2, description = ?3, labels = ?4, context = ?5
+        "UPDATE files SET generated_title = ?2, description = ?3, labels = ?4, context = ?5,
+                          label_scores = ?6
          WHERE id = ?1",
         params![
             file_id,
             title,
             description,
             serde_json::to_string(labels).unwrap_or_else(|_| "[]".into()),
-            context
+            context,
+            serde_json::to_string(scores).unwrap_or_else(|_| "{}".into())
         ],
     )?;
     // The labels are also written as real tags, in the same transaction as the
@@ -1037,24 +1043,32 @@ pub fn save_generated(
 
 /// The tags a machine put on this file, replaced wholesale.
 ///
-/// Only rows with `source = 'ai'` are touched. A tag the user added by hand
-/// survives re-analysis, model installs and rebuilds — the alternative loses
-/// somebody's own work every time a better model arrives, which is the kind of
-/// thing that makes people stop tagging anything.
+/// Every machine-written row is replaced; nothing with `source = 'user'` is
+/// touched. A tag the user added by hand survives re-analysis, model installs
+/// and rebuilds — the alternative loses somebody's own work every time a better
+/// model arrives, which is the kind of thing that makes people stop tagging.
+///
+/// Provenance travels with the tag: `vision` for a model's label, `ocr` or
+/// `filename` for a signal found in text, `kind` for the format itself. The
+/// interface uses it to separate what was seen from what was read.
 ///
 /// An empty list is a legitimate result and clears the machine's tags: the file
 /// was analysed and there was nothing to say about it.
-pub fn set_analysis_tags(conn: &Connection, file_id: &str, names: &[String]) -> AppResult<()> {
+pub fn set_analysis_tags(
+    conn: &Connection,
+    file_id: &str,
+    tags: &[(String, &'static str)],
+) -> AppResult<()> {
     conn.execute(
-        "DELETE FROM file_tags WHERE file_id = ?1 AND source = 'ai'",
+        "DELETE FROM file_tags WHERE file_id = ?1 AND source <> 'user'",
         params![file_id],
     )?;
 
-    for name in names {
+    for (name, source) in tags {
         let tag = ensure_tag(conn, name)?;
         conn.execute(
-            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, source) VALUES (?1, ?2, 'ai')",
-            params![file_id, tag.id],
+            "INSERT OR IGNORE INTO file_tags (file_id, tag_id, source) VALUES (?1, ?2, ?3)",
+            params![file_id, tag.id, source],
         )?;
     }
     Ok(())
@@ -1068,7 +1082,7 @@ pub fn set_analysis_tags(conn: &Connection, file_id: &str, names: &[String]) -> 
 pub fn analysis_tag_names(conn: &Connection) -> AppResult<Vec<String>> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT t.name FROM file_tags ft JOIN tags t ON t.id = ft.tag_id
-         WHERE ft.source = 'ai' ORDER BY t.name COLLATE NOCASE ASC",
+         WHERE ft.source <> 'user' ORDER BY t.name COLLATE NOCASE ASC",
     )?;
     let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

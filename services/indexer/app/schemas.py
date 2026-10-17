@@ -88,6 +88,9 @@ class DescribeResponse(BaseModel):
     title: str | None = None
     description: str | None = None
     labels: list[str] = []
+    # The share of the category's answer each label held. The interface shows
+    # this as evidence rather than presenting every tag as equally certain.
+    scores: dict[str, float] = {}
     engine: str = "none"
     available: bool = False
     reason: str | None = None

@@ -309,18 +309,42 @@ def encode_texts(texts: list[str]) -> list[np.ndarray] | None:
 _LOGIT_SCALE = 100.0
 
 
-def classify(path: str, prompts: dict[str, str]) -> dict[str, float] | None:
-    """Zero-shot: probability of each prompt for one image."""
-    if not prompts:
+# Prompt sets are a fixed taxonomy, so their text vectors are computed once and
+# reused for every image in the queue. Before this cache, describing one file
+# encoded sixty sentences through the text tower twice — the reason a single
+# call took 1.5 seconds and a large library took hours.
+_TEXT_CACHE: dict[tuple[str, ...], np.ndarray] = {}
+_TEXT_CACHE_LIMIT = 32
+
+
+def _text_matrix(prompts: list[str]) -> np.ndarray | None:
+    key = tuple(prompts)
+    cached = _TEXT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    vectors = encode_texts(prompts)
+    if not vectors:
         return None
-    image = encode_image(path)
-    if image is None:
+    matrix = np.stack(vectors)
+    if len(_TEXT_CACHE) >= _TEXT_CACHE_LIMIT:
+        _TEXT_CACHE.clear()
+    _TEXT_CACHE[key] = matrix
+    return matrix
+
+
+def classify_with(image: np.ndarray, prompts: dict[str, str]) -> dict[str, float] | None:
+    """Zero-shot probabilities for one already-encoded image.
+
+    The image is encoded once and asked several question sets in a row — a
+    category, then the vocabulary inside it. Re-encoding the same pixels for
+    each round was most of the cost of describing a file.
+    """
+    if image is None or not prompts:
         return None
-    texts = encode_texts(list(prompts.values()))
-    if not texts:
+    matrix = _text_matrix(list(prompts.values()))
+    if matrix is None:
         return None
 
-    matrix = np.stack(texts)
     similarities = (_LOGIT_SCALE * (matrix @ image)).astype(np.float32)
     # Softmax, shifted for numerical stability.
     similarities -= similarities.max()
@@ -329,6 +353,16 @@ def classify(path: str, prompts: dict[str, str]) -> dict[str, float] | None:
     return {
         key: float(probabilities[index]) for index, key in enumerate(prompts.keys())
     }
+
+
+def classify(path: str, prompts: dict[str, str]) -> dict[str, float] | None:
+    """Zero-shot: probability of each prompt for one image."""
+    if not prompts:
+        return None
+    image = encode_image(path)
+    if image is None:
+        return None
+    return classify_with(image, prompts)
 
 
 def available() -> bool:

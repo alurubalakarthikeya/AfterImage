@@ -207,12 +207,18 @@ function dev() {
 }
 
 /**
- * Freeze the service into a single executable.
+ * Freeze the service into a self-contained folder.
  *
- * The artifact lands in `src-tauri/resources/indexer/`, which
- * `src-tauri/tauri.conf.json` ships as a resource and `supervisor.rs` looks in
- * before it checks for a virtual environment. So the order is: build this once,
- * then `npm run tauri:build`, and the installer carries a working indexer.
+ * The artifact lands in `src-tauri/resources/indexer/afterimage-indexer/`,
+ * which `src-tauri/tauri.conf.json` ships as a resource and `supervisor.rs`
+ * starts. So the order is: build this once, then `npm run tauri:build`, and the
+ * installer carries a working indexer.
+ *
+ * A folder, not `--onefile`: ONNX Runtime and OpenCV load native libraries that
+ * do not survive being unpacked from a single-file archive. The one-file build
+ * started, answered `/health`, and then died with no traceback the moment the
+ * first model loaded — a crash that would look, from the interface, like the
+ * photographs simply never got tags.
  */
 function build() {
   const python = venvOrFail();
@@ -241,7 +247,7 @@ function build() {
     'PyInstaller',
     '--noconfirm',
     '--clean',
-    '--onefile',
+    '--onedir',
     '--name',
     'afterimage-indexer',
     '--distpath',
@@ -260,24 +266,76 @@ function build() {
       : 'PyInstaller failed. See the output above.');
   }
 
-  // PyInstaller leaves a build cache behind that must not be shipped.
-  rmSync(join(serviceDir, 'build', 'pyinstaller'), { recursive: true, force: true });
+  // PyInstaller leaves a build cache behind that must not be shipped. On
+  // Windows an antivirus scanner can hold the archive open for a moment, and a
+  // locked cache is not a failed build — the executable is already written.
+  // Retry briefly, then leave the cache rather than failing the release.
+  try {
+    rmSync(join(serviceDir, 'build', 'pyinstaller'), {
+      recursive: true,
+      force: true,
+      maxRetries: 6,
+      retryDelay: 300,
+    });
+  } catch (error) {
+    console.warn(`\n  Note: could not remove the PyInstaller cache (${error.code ?? error}).`);
+    console.warn('  The packaged executable is unaffected; the cache can be deleted later.\n');
+  }
 
-  // A stable name for the supervisor: it looks for exactly this.
-  const produced = join(resourcesDir, isWindows ? 'afterimage-indexer.exe' : 'afterimage-indexer');
+  // A stable shape for the supervisor: it looks inside the folder.
+  const produced = join(
+    resourcesDir,
+    'afterimage-indexer',
+    isWindows ? 'afterimage-indexer.exe' : 'afterimage-indexer',
+  );
   if (!existsSync(produced)) {
-    const alt = existsSync(join(resourcesDir, 'afterimage-indexer'))
-      ? join(resourcesDir, 'afterimage-indexer')
-      : null;
-    if (!alt) fail(`PyInstaller finished but no executable appeared in ${resourcesDir}`);
-    if (isWindows) cpSync(alt, produced);
+    fail(`PyInstaller finished but no executable appeared in ${dirname(produced)}`);
+  }
+
+  // A one-file build from an earlier run would be picked by the supervisor
+  // only after the folder, but it is 115 MB of dead weight in the installer.
+  const stale = join(resourcesDir, isWindows ? 'afterimage-indexer.exe' : 'afterimage-indexer');
+  if (existsSync(stale)) {
+    try {
+      rmSync(stale, { force: true });
+    } catch {
+      console.warn(`\n  Note: could not remove the old single-file engine at ${stale}.\n`);
+    }
   }
 
   console.log(
     `\n  Packaged indexer:\n    ${produced}\n\n` +
-      '  `npm run tauri:build` will now ship it, and the desktop app will start\n' +
-      '  it automatically — no Python needed on the target machine.\n',
+      '  `npm run tauri:build` will now ship the folder, and the desktop app will\n' +
+      '  start it automatically — no Python needed on the target machine.\n',
   );
+}
+
+/**
+ * Run the service's own test suite.
+ *
+ * The tagging and embedding rules are pure functions with synthetic scores, so
+ * this needs no models and finishes in milliseconds — which is what makes it
+ * usable as a release gate rather than something only run by hand.
+ */
+function test() {
+  const python = venvOrFail();
+  const result = run(python, ['-m', 'unittest', 'discover', '-s', 'tests', '-t', '.'], {
+    cwd: serviceDir,
+  });
+  if (result.status !== 0) fail('The service test suite failed.');
+}
+
+/** Tag-quality report over a folder of pictures. Aggregates only. */
+function evalTags(args) {
+  const python = venvOrFail();
+  // Resolve the folder against the caller's cwd: the script runs from
+  // services/indexer, and `--dir public` should mean the project's public
+  // folder, not the service's.
+  const forwarded = args.map((argument, index) =>
+    index > 0 && args[index - 1] === '--dir' ? resolve(process.cwd(), argument) : argument,
+  );
+  const result = run(python, ['eval_tags.py', ...forwarded], { cwd: serviceDir });
+  process.exitCode = result.status ?? 1;
 }
 
 const [command, ...rest] = process.argv.slice(2);
@@ -295,6 +353,12 @@ switch (command) {
   case 'build':
     build();
     break;
+  case 'test':
+    test();
+    break;
+  case 'eval':
+    evalTags(rest);
+    break;
   default:
     console.log(
       [
@@ -305,6 +369,8 @@ switch (command) {
         '    install [--full]     install the light stack, or everything with --full',
         '    dev                  run the service on 127.0.0.1:8765',
         '    build                freeze it into src-tauri/resources/indexer',
+        '    test                 run the service unit tests (no models needed)',
+        '    eval --dir <folder>  report tag quality over a folder of pictures',
         '',
       ].join('\n'),
     );

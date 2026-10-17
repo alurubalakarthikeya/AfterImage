@@ -1229,9 +1229,19 @@ fn reopen_for_vision(state: &Arc<AppState>) -> AppResult<usize> {
     if db::get_setting(&conn, "vision_epoch")?.as_deref() == Some(VISION_EPOCH) {
         return Ok(0);
     }
-    let count = db::requeue_for_models(&conn)?;
-    db::set_setting(&conn, "vision_epoch", VISION_EPOCH)?;
-    Ok(count)
+    db::requeue_for_models(&conn)
+}
+
+/// Stamp the generation once its work is actually queued.
+///
+/// Deliberately separate from :func:`reopen_for_vision`: stamping before the
+/// jobs reach the queue is how a crash — or a window closed during a long
+/// analysis pass — leaves a library permanently marked as "already reopened"
+/// with nothing reopened. The stamp means "queued", so it is written after the
+/// enqueue succeeds, not before.
+fn mark_vision_epoch(state: &Arc<AppState>) -> AppResult<()> {
+    let conn = state.db()?;
+    db::set_setting(&conn, "vision_epoch", VISION_EPOCH)
 }
 
 /// True when the service reports the visual bundles on disk.
@@ -1272,11 +1282,18 @@ pub fn reopen_library_for_vision(app: &AppHandle, state: &Arc<AppState>) {
         Ok(0) => {}
         Ok(count) => {
             log::info!("models: {count} files reopened for the models that arrived since");
+            let mut queued = true;
             if let Err(error) = enqueue_analysis_jobs(app, state) {
                 log::warn!("could not queue the reopened files: {error}");
+                queued = false;
             }
             if let Err(error) = enqueue_face_jobs(app, state) {
                 log::warn!("could not queue the reopened photographs: {error}");
+            }
+            if queued {
+                if let Err(error) = mark_vision_epoch(state) {
+                    log::warn!("could not stamp the model generation: {error}");
+                }
             }
         }
         Err(error) => log::warn!("could not reopen the library for the models: {error}"),
@@ -1686,7 +1703,11 @@ pub fn build_info(app: AppHandle, state: SharedState<'_>) -> AppResult<BuildInfo
             } else {
                 "afterimage-indexer"
             };
-            dir.join("indexer").join(name).exists()
+            let indexer = dir.join("indexer");
+            // The folder form is what `service:build` produces; the flat form is
+            // accepted for a one-file build from an earlier version.
+            indexer.join("afterimage-indexer").join(name).exists()
+                || indexer.join(name).exists()
         })
         .unwrap_or(false);
 

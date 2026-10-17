@@ -108,52 +108,100 @@ fn contains(haystack: &str, needle: &str) -> bool {
     }
 }
 
-/// The tags that belong on this file.
+/// One tag, and the kind of evidence that justified it.
+///
+/// The source is not decoration: the inspector shows it, and it is the
+/// difference between "the vision model saw a dog" and "the filename says
+/// `dog`". Existing rows from before provenance existed read as `ai`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagEvidence {
+    pub name: String,
+    pub source: &'static str,
+}
+
+/// Words that describe the container rather than the picture. They are never
+/// turned into tags, even if an older service version sends them: the kind
+/// column and the file's own type already say this much.
+const CONTAINER_LABELS: &[&str] = &["photo", "image", "picture", "scene"];
+
+fn normalise(raw: &str) -> Option<String> {
+    let clean = raw.trim().trim_start_matches('#').to_lowercase();
+    // One-word-ish, printable, and not so long that it is a sentence.
+    if clean.is_empty()
+        || clean.len() > 24
+        || !clean
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '-' || character == '_')
+    {
+        return None;
+    }
+    Some(clean)
+}
+
+/// The tags that belong on this file, with the evidence behind each one.
 ///
 /// `labels` come from the vision model and lead the list. `text` is the file's
 /// own extracted text when there is any. The result is deduplicated, lowercased
 /// and capped at [`MAX_TAGS`].
-pub fn derive_tags(kind: &str, name: &str, labels: &[String], text: Option<&str>) -> Vec<String> {
-    let mut ordered: Vec<String> = Vec::new();
+pub fn derive_tag_evidence(
+    kind: &str,
+    name: &str,
+    labels: &[String],
+    text: Option<&str>,
+) -> Vec<TagEvidence> {
+    let mut ordered: Vec<TagEvidence> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
 
-    let push = |raw: &str, ordered: &mut Vec<String>, seen: &mut BTreeSet<String>| {
-        let clean = raw.trim().trim_start_matches('#').to_lowercase();
-        // One-word-ish, printable, and not so long that it is a sentence.
-        if clean.is_empty() || clean.len() > 24 || !clean.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    let mut push = |raw: &str, source: &'static str| {
+        let Some(clean) = normalise(raw) else { return };
+        if CONTAINER_LABELS.contains(&clean.as_str()) {
             return;
         }
         if seen.insert(clean.clone()) {
-            ordered.push(clean);
+            ordered.push(TagEvidence {
+                name: clean,
+                source,
+            });
         }
     };
 
     for label in labels {
-        push(label, &mut ordered, &mut seen);
+        // A model's label is the strongest evidence there is about a picture.
+        push(label, "vision");
     }
 
+    // Text next: a stack trace is stronger evidence than a filename.
     let haystack = text.unwrap_or_default();
-    // Text first: a stack trace is stronger evidence than a filename.
     for (tag, needles) in SIGNALS {
-        if needles.iter().any(|needle| contains(haystack, needle)) {
-            push(tag, &mut ordered, &mut seen);
+        if needles
+            .iter()
+            .any(|needle| contains(haystack, needle))
+        {
+            push(tag, "ocr");
         }
     }
     // Then the name, which is weaker but always available — a file called
     // `receipt-march.pdf` has said what it is even when nothing was extracted.
-    let haystack = name;
     for (tag, needles) in SIGNALS {
-        if needles.iter().any(|needle| contains(haystack, needle)) {
-            push(tag, &mut ordered, &mut seen);
+        if needles.iter().any(|needle| contains(name, needle)) {
+            push(tag, "filename");
         }
     }
 
     if let Some(tag) = kind_tag(kind) {
-        push(tag, &mut ordered, &mut seen);
+        push(tag, "kind");
     }
 
     ordered.truncate(MAX_TAGS);
     ordered
+}
+
+/// The tag names alone, in the order they were derived.
+pub fn derive_tags(kind: &str, name: &str, labels: &[String], text: Option<&str>) -> Vec<String> {
+    derive_tag_evidence(kind, name, labels, text)
+        .into_iter()
+        .map(|tag| tag.name)
+        .collect()
 }
 
 /// A short phrase for what this file appears to be for, or nothing.
@@ -357,6 +405,40 @@ mod tests {
             infer("screenshot", "shot.png", &labels, None).as_deref(),
             Some("Games / Screenshots"),
         );
+    }
+
+    #[test]
+    fn provenance_separates_what_was_seen_from_what_was_read() {
+        let labels = labels(&["dog"]);
+        let text = "Traceback (most recent call last):\nValueError: bad input";
+        let evidence =
+            derive_tag_evidence("screenshot", "Screenshot_2026.png", &labels, Some(text));
+        let source_of = |name: &str| {
+            evidence
+                .iter()
+                .find(|tag| tag.name == name)
+                .map(|tag| tag.source)
+        };
+        assert_eq!(source_of("dog"), Some("vision"));
+        assert_eq!(source_of("python"), Some("ocr"));
+        assert_eq!(source_of("screenshot"), Some("kind"));
+    }
+
+    #[test]
+    fn a_filename_tag_is_marked_as_one() {
+        let evidence = derive_tag_evidence("document", "invoice number 42.pdf", &[], None);
+        let invoice = evidence
+            .iter()
+            .find(|tag| tag.name == "invoice")
+            .expect("the filename should justify a tag");
+        assert_eq!(invoice.source, "filename");
+    }
+
+    #[test]
+    fn container_words_are_never_tags() {
+        let labels = labels(&["photo", "image", "picture", "dog"]);
+        let tags = derive_tags("photo", "IMG_4021.jpg", &labels, None);
+        assert_eq!(tags, vec!["dog".to_string()], "{tags:?}");
     }
 
     #[test]
