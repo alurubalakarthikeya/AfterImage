@@ -102,7 +102,7 @@ The application is a desktop program with a native core, a webview interface and
 
 - Storage: local SQLite and an on-disk vector index, under the OS application-data directory
 - Distribution: NSIS installer for Windows, built by `tauri build`
-- Website: a single static page that serves the installers from its own folder
+- Website: a single static page that serves the installer from its own folder
 
 ## Project Structure
 
@@ -117,7 +117,7 @@ AfterImage/
 │   ├── services/              # the host boundary: nativeHost (Tauri), developmentHost, webHost
 │   ├── hooks/                 # appearance, host events, shortcuts, drop import, file queries
 │   ├── types/                 # the shared vocabulary
-│   └── utils/                 # formatting, highlighting, installer probing
+│   └── utils/                 # formatting, highlighting, where the installer is served
 ├── src-tauri/                 # Rust core
 │   ├── src/
 │   │   ├── lib.rs             # app setup, command registration, shutdown
@@ -154,7 +154,9 @@ npm install
 npm run dev          # http://localhost:1420
 ```
 
-In a browser the page is the download. The archive needs a process that can read folders, keep a database and run the models, so the website offers the program rather than imitating it.
+In a browser the page is the download: one line offering the installer, which is what the site exists to do. The archive needs a process that can read folders, keep a database and run the models, so the website offers the program rather than imitating it.
+
+Adding `?shell` to the development URL mounts the archive interface in the browser instead — for looking at layout, glass and empty states without a Rust build. Development only: a published bundle always answers with the download page.
 
 ### Desktop application
 
@@ -173,6 +175,8 @@ npm run service:build     # freezes the indexer into src-tauri/resources/indexer
 npm run release           # freezes the engine (when PyInstaller is installed),
                           # builds the installer, stages it into public/downloads/
 ```
+
+The staged installer lives in `public/downloads` so the development server can serve it, and every build copies that folder into `dist`. The application embeds `dist`, so `vite build` drops `dist/downloads` from its output — otherwise each release would pack the previous release's installer inside itself — and `npm run release` writes the file back for the deployment. `npm run release -- --use-existing` restages whatever is already built.
 
 ### Checks
 

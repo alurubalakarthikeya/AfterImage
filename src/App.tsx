@@ -111,6 +111,20 @@ function LoadFailure({ message }: { message: string }) {
 }
 
 /**
+ * Whether to mount the archive in a browser for a design review.
+ *
+ * `npm run dev` opens the download page, which is what a visitor should get in
+ * a browser. Adding `?shell` to that URL mounts the window instead — with
+ * whatever host the browser can offer — so the chrome, the glass and the empty
+ * states can be looked at without a Rust build. Development only: the published
+ * bundle ignores the flag and always answers with the download page.
+ */
+function devShellPreview(): boolean {
+  if (!import.meta.env.DEV) return false;
+  return new URLSearchParams(window.location.search).has('shell');
+}
+
+/**
  * Application root.
  *
  * Two programs behind one bundle, decided once, at the top. In a browser the
@@ -128,7 +142,7 @@ export default function App() {
     dismissSplash();
   }, []);
 
-  if (!isTauri()) {
+  if (!isTauri() && !devShellPreview()) {
     return (
       <>
         <Landing />
@@ -163,6 +177,8 @@ function Archive() {
   const error = useArchiveStore((state) => state.error);
   const load = useArchiveStore((state) => state.load);
   const onboarded = useSettingsStore((state) => state.onboarded);
+  // A design review wants the window, not the wizard that precedes it.
+  const preview = devShellPreview();
   const [slow, setSlow] = useState(false);
 
   useEffect(() => {
@@ -206,7 +222,7 @@ function Archive() {
 
   // The wizard comes before the shell, once. It brings its own title bar so the
   // window keeps its controls while the user is answering it.
-  if (!onboarded) {
+  if (!onboarded && !preview) {
     return (
       <>
         <Onboarding />

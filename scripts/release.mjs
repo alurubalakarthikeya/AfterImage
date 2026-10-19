@@ -4,17 +4,16 @@
  *
  *   node scripts/release.mjs [--dry-run] [--use-existing]
  *
- * The landing page offers the Windows installer and the Android package, and
- * both links are relative — `<site>/downloads/AfterImage-setup.exe` — so what
- * has to be true for them to work is that those two files sit beside the page
- * that links them. That is the whole job of this file: build, find what the
- * build produced, and copy it into `public/downloads` under a name that never
- * changes. `vite build` then carries them into `dist/`, which is the folder
- * that gets deployed.
+ * The landing page offers the Windows installer, and the link is relative —
+ * `<site>/downloads/AfterImage-setup.exe` — so what has to be true for it to
+ * work is that that file sits beside the page that links it. That is the whole
+ * job of this file: build, find what the build produced, and copy it into
+ * `public/downloads` under a name that never changes. `vite build` then carries
+ * it into `dist/`, which is the folder that gets deployed.
  *
  * The alternative was a release on a code host, and it was worse in three ways:
  * the download needed the repository to be public and reachable from wherever
- * the page was opened, the page and the artifacts could be published at
+ * the page was opened, the page and the artifact could be published at
  * different times, and the link pointed away from the build sitting next to it.
  * The version belongs to the build; the filename belongs to the link.
  *
@@ -36,9 +35,8 @@ const useExisting = process.argv.includes('--use-existing');
  * What the page links to, and where the build leaves it.
  *
  * The search is a glob rather than a fixed path because Tauri's bundler names
- * the installer after the product and the version, and the Android output moves
- * between `universal` and an ABI-named directory depending on how it was built.
- * Whatever is newest and matches is the artifact.
+ * the installer after the product and the version. Whatever is newest and
+ * matches is the artifact.
  */
 const ASSETS = [
   {
@@ -48,18 +46,19 @@ const ASSETS = [
     match: (file) => file.toLowerCase().endsWith('.exe'),
     hint: 'npm run tauri:build',
   },
-  {
-    name: 'AfterImage.apk',
-    label: 'Android package',
-    from: 'src-tauri/gen/android/app/build/outputs/apk',
-    match: (file) => file.toLowerCase().endsWith('.apk'),
-    hint: 'npm run tauri -- android build',
-    optional: true,
-  },
 ];
 
+/**
+ * Two destinations, for two different readers.
+ *
+ * `public/downloads` is what `npm run dev` serves and what every build copies
+ * into `dist` — the site's own copy of the file. `dist/downloads` is what a
+ * deployment serves, written here *after* the desktop build has run: the
+ * application embeds `dist`, so an installer sitting there during the build
+ * would be packed inside the installer (`vite.config.ts` drops it from the
+ * build output for exactly that reason).
+ */
 const STAGING = 'public/downloads';
-/** `dist` is served verbatim, so it gets the same files when it exists. */
 const BUILD_OUTPUT = 'dist/downloads';
 
 /** Newest matching file under a directory, searched to a shallow depth. */
@@ -93,9 +92,7 @@ function newest(dir, match, depth = 4) {
  *
  * The Windows installer is not optional: it is the artifact the page's download
  * button points at, and publishing a leftover from an earlier build is the one
- * failure this script exists to prevent. Android is attempted only when the
- * project has been generated for it and allowed to fail on its own — a machine
- * without the Android SDK should still be able to publish the desktop app.
+ * failure this script exists to prevent.
  */
 /**
  * Freeze the local indexer, when this machine has the tools for it.
@@ -150,23 +147,6 @@ function buildArtifacts() {
     // through `PATH` without a shell.
     shell: process.platform === 'win32',
   });
-
-  if (!existsSync(join(root, 'src-tauri', 'gen', 'android'))) {
-    console.warn(
-      '· Android project not generated — the Android row will say "Not published yet" (run `tauri android init` to add it).',
-    );
-    return;
-  }
-  console.log('\nBuilding the Android package…');
-  try {
-    execFileSync('npm', ['run', 'tauri', '--', 'android', 'build'], {
-      cwd: root,
-      stdio: 'inherit',
-      shell: process.platform === 'win32',
-    });
-  } catch {
-    console.warn('· Android build failed — publishing the installer without an APK.');
-  }
 }
 
 if (!dryRun && !useExisting) buildArtifacts();
@@ -205,9 +185,9 @@ for (const target of [STAGING, BUILD_OUTPUT]) {
   console.log(`  copied into ${target}`);
 }
 
-console.log('\nDone. The page now serves these, from its own folder:');
+console.log('\nDone. The page now serves this, from its own folder:');
 for (const asset of ASSETS) {
-  console.log(`  /downloads/${asset.name}${asset.optional ? ' (absent until built)' : ''}`);
+  console.log(`  /downloads/${asset.name}`);
 }
 console.log(
   '\nDeploy the folder that holds the site (dist/) and the downloads go with it — no second upload.',

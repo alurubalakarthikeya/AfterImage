@@ -1,8 +1,58 @@
 AFTERIMAGE — PRODUCT NOTES
-Build 0.1.4 · Windows (NSIS) · Apache-2.0
+Build 0.1.5 · Windows (NSIS) · Apache-2.0
 ================================================================================
 
-0. WHAT CHANGED IN 0.1.4
+0. WHAT CHANGED IN 0.1.5
+--------------------------------------------------------------------------------
+
+  The download is one line.  The landing page used to open with a glass card
+  listing platforms: two rows, a spinner while a probe asked the server whether
+  each file existed, and a second row for an Android package that was never
+  built. It is now a heading, a sentence, one button pointing at
+  downloads/AfterImage-setup.exe, and the version under it. The probe is gone
+  with it (src/utils/releases.ts), because a download link that has to ask
+  permission before it can be shown is a worse download link than one that is
+  simply there.
+
+  The installer no longer contains the previous installer.  Every build copies
+  `public/downloads` into `dist` so the site carries its own copy of the file —
+  and the desktop build embeds `dist`, so each release packed the previous
+  release's bytes inside itself: a 5 MB program that downloaded as 10 MB, and
+  growing by one full installer with every publish. `vite.config.ts` now drops
+  `dist/downloads` from the build output, and `scripts/release.mjs` writes it
+  back afterwards, for the deployment only.
+
+  Release script follows.  scripts/release.mjs no longer looks for an Android
+  build, no longer tries to build one, and no longer warns about the APK row —
+  it builds the Windows installer, finds the newest NSIS artifact and stages it
+  as public/downloads/AfterImage-setup.exe. Both the site folder and the built
+  dist/ get the same file.
+
+  Glass, rebuilt.  The material is now a specular highlight gathered in one
+  corner plus a diagonal sheen, over a four-part backdrop filter: blur 46px,
+  saturate 200%, brightness 1.05, contrast 1.02. Saturation and contrast are
+  what keep a large blur from turning the ambient wash into fog; the corner
+  highlight is what makes the pane read as a surface rather than a lighter
+  rectangle. Chromium and WebKit are both served: every backdrop-filter is
+  declared with its -webkit- pair. Two new fallbacks: the platform's own
+  prefers-reduced-transparency preference flattens glass exactly as the
+  in-app "Reduce transparency" switch does, and a browser with no backdrop
+  filter support gets a plain panel instead of an unblurred translucent fill.
+
+  The website's wash is its own.  The landing page borrowed the shell's ambient
+  fields, which are strong enough for glass panels to refract — over a page with
+  no panels they only made the canvas look grey. It now paints two faint
+  corners (af-ambient-quiet); the shell keeps the wash its glass needs.
+
+  The shell can be reviewed in a browser.  Adding ?shell to the development URL
+  mounts the archive interface with the host the browser can offer, so chrome,
+  glass and empty states can be looked at without a Rust build. Development
+  only: the published bundle ignores the flag, and a browser still gets the
+  download page.
+
+
+--------------------------------------------------------------------------------
+0.1 WHAT CHANGED IN 0.1.4
 --------------------------------------------------------------------------------
 
   Image tagging rewritten.  One flat list of prompts for every image is
@@ -295,12 +345,15 @@ carry the difference.
   Where          src/pages/Settings.tsx, services/indexer/app/models.py
 
 3.17 THE WEBSITE
-  What it does   One page: what this is, and the installer.
-  How it works   The browser build renders only the landing page. It probes
-                 its own /downloads folder before offering a button, so it
-                 never links to a file that is not there. The desktop build
-                 never renders it.
-  Where          src/pages/Landing.tsx, src/utils/releases.ts
+  What it does   One page: what this is, and one button for the installer.
+  How it works   The browser build renders only the landing page — logo,
+                 heading, a sentence, the installer, its version and its
+                 requirements. The link is a plain anchor to its own
+                 /downloads/AfterImage-setup.exe, so it is right-clickable,
+                 resumable and openable in a new tab. The desktop build never
+                 renders it. In development only, ?shell mounts the archive
+                 interface instead so the chrome can be reviewed.
+  Where          src/pages/Landing.tsx, src/utils/releases.ts, src/App.tsx
 
 3.18 RELEASE
   What it does   Freezes the engine, builds the installer, and puts it beside
@@ -500,10 +553,11 @@ carry the difference.
 10. THIS BUILD
 --------------------------------------------------------------------------------
 
-  Version        0.1.4
-  Installer      AfterImage_0.1.4_x64-setup.exe (NSIS)
+  Version        0.1.5
+  Installer      AfterImage_0.1.5_x64-setup.exe (NSIS)
   Site copy      public/downloads/AfterImage-setup.exe
-  Binary date    2026-10-14 20:40
+  Size           4,983,676 bytes, in both public/downloads and dist/downloads
+  Binary date    2026-10-18 11:45
   Core commands  70 typed Tauri commands
   Tests          49 Rust tests, 52 search cases, 30 service tests
   License        Apache-2.0

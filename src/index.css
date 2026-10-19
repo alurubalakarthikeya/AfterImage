@@ -58,9 +58,9 @@
   /* Glass. Chrome that floats over the canvas is translucent and blurred, so
      the ambient wash behind it shows through and the window gains depth
      without a single drop shadow doing the work. */
-  --af-glass: rgba(255, 255, 255, 0.34);
-  --af-glass-chrome: rgba(255, 255, 255, 0.62);
-  --af-glass-hairline: rgba(255, 255, 255, 0.9);
+  --af-glass: rgba(255, 255, 255, 0.44);
+  --af-glass-chrome: rgba(255, 255, 255, 0.68);
+  --af-glass-hairline: rgba(255, 255, 255, 0.95);
   /*
    * The edge under a glass panel, and the shadow it casts.
    *
@@ -71,8 +71,9 @@
    * painted onto it. Without the pair, a blurred rectangle looks like a lighter
    * rectangle with a border.
    */
-  --af-glass-edge: rgba(0, 0, 0, 0.05);
-  --af-glass-shadow: 0 1px 1px rgba(0, 0, 0, 0.04), 0 12px 32px -14px rgba(0, 0, 0, 0.28);
+  --af-glass-edge: rgba(0, 0, 0, 0.055);
+  --af-glass-shadow: 0 1px 1px rgba(0, 0, 0, 0.04), 0 2px 7px -3px rgba(0, 0, 0, 0.07),
+    0 18px 42px -22px rgba(0, 0, 0, 0.32);
   /*
    * The sheen: a band of light across the top of a panel, fading out by the
    * middle. This is what a person actually reads as glass — a translucent
@@ -81,7 +82,14 @@
    * through. It is cheap, it works at every size, and unlike a shadow it does
    * not depend on what the panel happens to sit on.
    */
-  --af-glass-sheen: rgba(255, 255, 255, 0.5);
+  --af-glass-sheen: rgba(255, 255, 255, 0.56);
+  /*
+   * The specular: light gathered in one corner rather than a flat band across
+   * the top. A pane of glass catches a highlight at the angle it meets the
+   * light, and that is what separates a surface with depth from a rectangle
+   * with a lighter top edge. Kept low enough to sit under content.
+   */
+  --af-glass-glow: rgba(255, 255, 255, 0.38);
   /*
    * Fine grain, at three percent.
    *
@@ -110,6 +118,7 @@
   --af-ambient-b: rgba(0, 0, 0, 0.15);
   --af-ambient-c: rgba(0, 0, 0, 0.1);
   --af-ambient-d: rgba(0, 0, 0, 0.07);
+  --af-ambient-e: rgba(0, 0, 0, 0.05);
 
   /* Hairlines */
   --af-line: rgba(0, 0, 0, 0.09);
@@ -187,20 +196,23 @@
   --af-highlight: #5c4a00;
   --af-highlight-ink: #f8e3a1;
 
-  --af-glass: rgba(8, 8, 8, 0.46);
-  --af-glass-chrome: rgba(8, 8, 8, 0.68);
-  --af-glass-hairline: rgba(255, 255, 255, 0.13);
-  --af-glass-edge: rgba(0, 0, 0, 0.5);
-  --af-glass-shadow: 0 1px 1px rgba(0, 0, 0, 0.5), 0 12px 34px -16px rgba(0, 0, 0, 0.8);
+  --af-glass: rgba(10, 10, 10, 0.44);
+  --af-glass-chrome: rgba(12, 12, 12, 0.7);
+  --af-glass-hairline: rgba(255, 255, 255, 0.17);
+  --af-glass-edge: rgba(0, 0, 0, 0.55);
+  --af-glass-shadow: 0 1px 1px rgba(0, 0, 0, 0.5), 0 2px 8px -3px rgba(0, 0, 0, 0.6),
+    0 18px 44px -20px rgba(0, 0, 0, 0.85);
   /* On a dark panel the sheen is much weaker: the same 50% band that reads as
      light on white reads as a grey smear over a photograph. */
-  --af-glass-sheen: rgba(255, 255, 255, 0.05);
+  --af-glass-sheen: rgba(255, 255, 255, 0.06);
+  --af-glass-glow: rgba(255, 255, 255, 0.07);
 
   /* Steps of white on black; see the light theme for why there is no hue here. */
   --af-ambient-a: rgba(255, 255, 255, 0.16);
   --af-ambient-b: rgba(255, 255, 255, 0.12);
   --af-ambient-c: rgba(255, 255, 255, 0.085);
   --af-ambient-d: rgba(255, 255, 255, 0.06);
+  --af-ambient-e: rgba(255, 255, 255, 0.045);
 
   --af-line: rgba(255, 255, 255, 0.1);
   --af-line-strong: rgba(255, 255, 255, 0.2);
@@ -474,11 +486,13 @@
 
 /* The only "glass" in the app: floating chrome over imagery. */
 @utility glass-chrome {
-  background-color: color-mix(in srgb, var(--af-surface) 78%, transparent);
-  background-image: linear-gradient(180deg, var(--af-glass-sheen), transparent 46%);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  box-shadow: inset 0 1px 0 var(--af-glass-hairline);
+  background-color: color-mix(in srgb, var(--af-surface) 74%, transparent);
+  background-image:
+    radial-gradient(120% 140% at 0% 0%, var(--af-glass-glow), transparent 62%),
+    linear-gradient(180deg, var(--af-glass-sheen), transparent 46%);
+  backdrop-filter: saturate(200%) blur(22px) brightness(1.03);
+  -webkit-backdrop-filter: saturate(200%) blur(22px) brightness(1.03);
+  box-shadow: inset 0 1px 0 var(--af-glass-hairline), inset 0 -1px 0 var(--af-glass-edge);
 }
 
 /*
@@ -492,27 +506,59 @@
  */
 @utility glass {
   background-color: var(--af-glass);
-  background-image: linear-gradient(180deg, var(--af-glass-sheen), transparent 44%);
+  background-image:
+    radial-gradient(130% 110% at 0% 0%, var(--af-glass-glow), transparent 58%),
+    linear-gradient(168deg, var(--af-glass-sheen), transparent 44%);
   /*
-   * The three-part filter is what makes this read as a pane of glass rather
+   * The four-part filter is what makes this read as a pane of glass rather
    * than a grey wash: the blur is large enough that nothing behind it stays
    * legible, the saturation is what brings back the colour the blur averages
-   * away — the effect a shared pane has on what is behind it — and the slight
-   * lift in brightness is the light the pane passes through.
+   * away — the effect a shared pane has on what is behind it — the slight lift
+   * in brightness is the light the pane passes through, and the touch of
+   * contrast keeps the blurred field from turning into fog.
    */
-  backdrop-filter: blur(40px) saturate(180%) brightness(1.05);
-  -webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.05);
+  backdrop-filter: blur(46px) saturate(200%) brightness(1.05) contrast(1.02);
+  -webkit-backdrop-filter: blur(46px) saturate(200%) brightness(1.05) contrast(1.02);
   box-shadow: inset 0 1px 0 var(--af-glass-hairline), inset 0 -1px 0 var(--af-glass-edge),
     var(--af-glass-shadow);
 }
 
 @utility glass-float {
   background-color: var(--af-glass-chrome);
-  background-image: linear-gradient(180deg, var(--af-glass-sheen), transparent 46%);
-  backdrop-filter: blur(48px) saturate(190%) brightness(1.06);
-  -webkit-backdrop-filter: blur(48px) saturate(190%) brightness(1.06);
+  background-image:
+    radial-gradient(120% 120% at 0% 0%, var(--af-glass-glow), transparent 60%),
+    linear-gradient(168deg, var(--af-glass-sheen), transparent 46%);
+  backdrop-filter: blur(52px) saturate(200%) brightness(1.07) contrast(1.02);
+  -webkit-backdrop-filter: blur(52px) saturate(200%) brightness(1.07) contrast(1.02);
   box-shadow: inset 0 1px 0 var(--af-glass-hairline), inset 0 -1px 0 var(--af-glass-edge),
     var(--af-glass-shadow);
+}
+
+/*
+ * Where the browser cannot blur the backdrop, the glass utilities would be a
+ * translucent fill over unblurred content — the worst of both worlds. Honour the
+ * platform preference and the missing feature the same way "Reduce transparency"
+ * is honoured: a plain panel, separated by its hairline.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-float,
+  .glass-chrome {
+    background-color: var(--af-surface);
+    background-image: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: var(--af-shadow-soft);
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-float,
+  .glass-chrome {
+    background-color: var(--af-surface);
+    background-image: none;
+  }
 }
 
 /*
@@ -560,10 +606,29 @@
     radial-gradient(1050px 700px at 104% 114%, var(--af-ambient-b), transparent),
     radial-gradient(900px 580px at 64% 36%, var(--af-ambient-c), transparent),
     radial-gradient(780px 540px at 12% 94%, var(--af-ambient-d), transparent),
+    radial-gradient(520px 380px at 82% 8%, var(--af-ambient-e), transparent),
     var(--af-grain);
   background-attachment: fixed;
-  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, repeat;
-  background-size: auto, auto, auto, auto, 140px 140px;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, repeat;
+  background-size: auto, auto, auto, auto, auto, 140px 140px;
+}
+
+/*
+ * The quiet wash, for a page with no glass on it.
+ *
+ * The shell's ambient is tuned for panels to refract, and it earns its
+ * strength there. The website has no panels, so the same fields only made it
+ * look grey. Two faint corners keep it from being a flat sheet of canvas
+ * without dimming the page the download button sits on.
+ */
+@utility af-ambient-quiet {
+  background-image:
+    radial-gradient(820px 560px at -8% -18%, var(--af-ambient-e), transparent),
+    radial-gradient(700px 480px at 108% 118%, var(--af-ambient-e), transparent),
+    var(--af-grain);
+  background-attachment: fixed;
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-size: auto, auto, 140px 140px;
 }
 
 /*

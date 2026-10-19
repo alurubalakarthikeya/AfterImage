@@ -1,8 +1,8 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 
 // The renderer's own version, taken from package.json rather than typed out.
 // It is the browser preview's answer to "which build is this?" — the desktop
@@ -11,10 +11,35 @@ import { readFileSync } from 'node:fs';
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 const buildTime = new Date().toISOString();
 
+/**
+ * Keep the staged installer out of the application bundle.
+ *
+ * `public/downloads/AfterImage-setup.exe` is copied into `dist` by every build
+ * so the website can serve the file from its own folder — and the desktop build
+ * embeds `dist`, so the installer was being packed inside itself. Not
+ * metaphorically: one NSIS installer carried the bytes of the previous release
+ * as a resource, which is why a 5 MB program downloaded as 10 MB and grew with
+ * every release.
+ *
+ * The copy is removed from the build output here. `scripts/release.mjs` puts it
+ * back afterwards, for the deployment — so what ships to the browser bundle
+ * still has the file beside the page, and what ships inside the application
+ * does not.
+ */
+function excludeStagedDownloads(): Plugin {
+  return {
+    name: 'afterimage:exclude-staged-downloads',
+    apply: 'build',
+    closeBundle() {
+      rmSync(new URL('./dist/downloads', import.meta.url), { recursive: true, force: true });
+    },
+  };
+}
+
 // AfterImage is a Tauri desktop app, but the renderer must also run in a plain
 // browser so the UI can be developed and reviewed without the Rust toolchain.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), excludeStagedDownloads()],
   define: {
     __BUILD_VERSION__: JSON.stringify(pkg.version ?? '0.0.0'),
     __BUILD_TIME__: JSON.stringify(buildTime),
